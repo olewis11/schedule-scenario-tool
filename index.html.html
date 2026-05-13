@@ -1,0 +1,1083 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Boston Dynamics PDP Timeline Tool</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<style>
+*{box-sizing:border-box}
+body{margin:0;padding:0;background:#edf1f7;font-family:Inter,system-ui,sans-serif}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const {useState,useRef,useEffect,useMemo,useCallback}=React;
+
+const PHASES=[
+  {name:"Conceive",color:"#a93226",desc:"Assess market potential; build product hypothesis"},
+  {name:"Define",  color:"#c0392b",desc:"Determine feasibility; establish tech architecture"},
+  {name:"Plan",    color:"#d35400",desc:"Finalize product concept; build full program plan"},
+  {name:"Design",  color:"#d68910",desc:"Detailed design; D-build prototypes; PDR"},
+  {name:"Refine",  color:"#b7950b",desc:"A-build field testing; CDR; iterate toward production"},
+  {name:"Verify",  color:"#1e8449",desc:"B-build DVT; SAcR; Model Fix; finalize design"},
+  {name:"Qualify", color:"#148f77",desc:"C-build; production validation; launch readiness"},
+];
+const PROD_PHASES=[{id:7,name:"Launch",color:"#1a5276"},{id:8,name:"Sustain",color:"#2e4057"}];
+const DEFAULT_PCTS=[0.06,0.09,0.12,0.20,0.23,0.20,0.10];
+const DEFAULT_LAUNCH_WK=52,DEFAULT_SUSTAIN_WK=78,POST_SOP_DISPLAY=91;
+const GATE_COLOR="#f5c800",TR_COLOR="#1a6fba",BUILD_BAR_H=40,MAX_HISTORY=30;
+const GATE_DESC=["Conceive phase exit","Define phase exit","Plan phase exit","Design phase exit","Refine phase exit","Verify phase exit · Model Fix","Qualify phase exit · Start of Production","Launch phase exit"];
+const DEFAULT_TR=[
+  {id:"SCR", phase:1,pos:0.75,desc:"System Concept Review"},
+  {id:"SRR", phase:2,pos:0.30,desc:"System Requirements Review"},
+  {id:"SAR", phase:2,pos:0.82,desc:"System Architecture Review"},
+  {id:"PDR", phase:3,pos:0.85,desc:"Preliminary Design Review"},
+  {id:"CDR", phase:4,pos:0.85,desc:"Critical Design Review"},
+  {id:"SAcR",phase:5,pos:0.87,desc:"System Acceptance Review"},
+];
+const BUILD_FAMILIES=[
+  {letter:"D",phase:3,s:0.10,e:0.82},{letter:"A",phase:4,s:0.08,e:0.78},
+  {letter:"B",phase:5,s:0.08,e:0.78},{letter:"C",phase:6,s:0.08,e:0.65},
+];
+// Testing bar defaults are computed at runtime in App via useMemo using the actual dev duration.
+const MO=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+const DARK={bg:"#0b1220",panel:"#0e1a2c",text:"#dde4f2",textMuted:"#546a85",textDim:"#2c3e52",border:"#1b2e45",btnBg:"#14202f",btnAct:"#1e60a5",btnText:"#4f6a88",rowLbl:"#3e5470",ttBg:"#0c1724",ttBorder:"#263d5a",handle:"rgba(255,255,255,0.70)",inBg:"#0e1b2d",inBorder:"#263d5a",inText:"#b8cce0",rulerLine:"#1b2e45",rulerMajTk:"#3d62a0",rulerMinTk:"#1e3050",rulerMajTx:"#6a92ba",rulerMinTx:"#384f68",phTx:"rgba(255,255,255,0.96)",phSub:"rgba(255,255,255,0.76)",phDim:"rgba(255,255,255,0.48)",milTx:"#ccd8ee",milSub:"#7898ba",cardBg:"#101e32",cardBorder:"#1e3352",cardHov:"#162840",editBg:"#162030",dangerText:"#e05a5a",dangerBg:"#2a1a1a",sop:"#16a085",undoBg:"#111e30",gridLine:"rgba(255,255,255,0.04)"};
+const LIGHT={bg:"#edf1f7",panel:"#ffffff",text:"#1a2840",textMuted:"#526880",textDim:"#9ab0c8",border:"#cad6e8",btnBg:"#dce6f2",btnAct:"#1e60a5",btnText:"#5878a0",rowLbl:"#7898bc",ttBg:"#ffffff",ttBorder:"#b8cfe0",handle:"rgba(0,0,0,0.55)",inBg:"#ffffff",inBorder:"#b8cfe0",inText:"#1a2840",rulerLine:"#cad6e8",rulerMajTk:"#4870a8",rulerMinTk:"#b8cfe0",rulerMajTx:"#3c62a2",rulerMinTx:"#88a8c0",phTx:"rgba(255,255,255,0.97)",phSub:"rgba(255,255,255,0.88)",phDim:"rgba(255,255,255,0.68)",milTx:"#1a2840",milSub:"#486080",cardBg:"#ffffff",cardBorder:"#cad6e8",cardHov:"#edf3fa",editBg:"#f0f5fc",dangerText:"#c0392b",dangerBg:"#fdf0f0",sop:"#148f77",undoBg:"#e8eef8",gridLine:"rgba(0,0,0,0.05)"};
+
+function normP(pcts) {
+  const sum = pcts.reduce((a, b) => a + b, 0);
+  return pcts.map(v => v / sum);
+}
+function mkSt(normalized) {
+  const starts = [];
+  let cursor = 0;
+  normalized.forEach(v => { starts.push(cursor); cursor += v; });
+  return starts;
+}
+function fmtW(weeks) {
+  weeks = Math.round(weeks);
+  if (weeks >= 52) return (weeks / 52).toFixed(1) + "yr";
+  if (weeks >= 8) return Math.round(weeks / 4.33) + "mo";
+  return weeks + "wk";
+}
+function fmtD(d) {
+  return d.toLocaleDateString("en-US", {month:"short", day:"numeric", year:"numeric"});
+}
+function fmtDT(ts) {
+  const d = new Date(ts);
+  return d.toLocaleDateString("en-US", {month:"short", day:"numeric", year:"numeric"})
+    + " " + d.toLocaleTimeString("en-US", {hour:"numeric", minute:"2-digit"});
+}
+function toInp(d) {
+  return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+}
+function frInp(s) {
+  const [y, m, day] = s.split("-").map(Number);
+  return new Date(y, m - 1, day);
+}
+function addD(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
+function addY(d, n) { const r = new Date(d); r.setFullYear(r.getFullYear() + n); return r; }
+function dBetw(a, b) { return Math.max(7, Math.round((b - a) / 864e5)); }
+function pc(x) { return (x * 100) + "%"; }
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function makeDefaultDbList() {
+  return BUILD_FAMILIES.map((f, i) => ({key:i, family:f.letter, seq:1, phase:f.phase, s:f.s, e:f.e}));
+}
+function maxKey(list) { return list.reduce((m, b) => Math.max(m, b.key), -1) + 1; }
+function resequence(list, fam) {
+  let seq = 1;
+  return list.map(b => b.family === fam ? {...b, seq: seq++} : b);
+}
+function buildLabel(fam, seq, siblings) { return siblings > 1 ? `${fam}${seq}` : `${fam}-Build`; }
+function today0() { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }
+
+function getTicks(start, end, gran) {
+  const ms = end - start;
+  if (ms <= 0) return [];
+  const ticks = [];
+  const totalMonths = Math.round(ms / (30.44 * 864e5));
+  let cursor, safe, x;
+
+  if (gran === "yearly") {
+    cursor = new Date(start.getFullYear(), 0, 1);
+    if (cursor < start) cursor = new Date(cursor.getFullYear() + 1, 0, 1);
+    for (safe = 0; cursor <= end && safe < 300; safe++) {
+      x = (cursor - start) / ms;
+      if (x >= 0 && x <= 1) ticks.push({x, label: String(cursor.getFullYear()), major: true});
+      cursor = new Date(cursor.getFullYear() + 1, 0, 1);
+    }
+    return ticks;
+  }
+
+  if (gran === "quarterly") {
+    const startQ = Math.floor(start.getMonth() / 3) * 3;
+    cursor = new Date(start.getFullYear(), startQ, 1);
+    if (cursor < start) cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 3, 1);
+    for (safe = 0; cursor <= end && safe < 300; safe++) {
+      x = (cursor - start) / ms;
+      if (x >= 0 && x <= 1) {
+        const qNum = Math.floor(cursor.getMonth() / 3) + 1;
+        const lbl = qNum === 1 ? "Q1 '" + String(cursor.getFullYear()).slice(2) : "Q" + qNum;
+        ticks.push({x, label: lbl, major: cursor.getMonth() === 0});
+      }
+      cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 3, 1);
+    }
+    return ticks;
+  }
+
+  // Monthly
+  const skip = totalMonths > 48 ? 6 : totalMonths > 24 ? 3 : totalMonths > 12 ? 2 : 1;
+  cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+  if (cursor < start) cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+  for (safe = 0, x = 0; cursor <= end && safe < 300; safe++) {
+    const frac = (cursor - start) / ms;
+    if (frac >= 0 && frac <= 1) {
+      const isMajor = cursor.getMonth() === 0;
+      const lbl = isMajor
+        ? MO[0] + " '" + String(cursor.getFullYear()).slice(2)
+        : (safe % skip === 0 ? MO[cursor.getMonth()] : "");
+      ticks.push({x: frac, label: lbl, major: isMajor});
+    }
+    cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+  }
+  return ticks;
+}
+
+const CSV_META="##PDP_META:";
+function exportCSVFull(snap,mode,gran,startDate,sopDate,launchEndDate,sustainEndDate,devDays,n,devPhaseStart,devPhaseEnd,devPhaseDate,dbList,trVisible,trPos,launchWeeks,sustainWeeks,testBars){
+  const fmt=d=>fmtD(d);
+  const meta={snap:{...snap,anchor:toInp(snap.anchor)},mode,gran};
+  const metaRow=[CSV_META+JSON.stringify(meta),"","","","","",""];
+  const rows=[["Task Name","Start Date","End Date","Duration (days)","% Complete","Predecessors","Notes"]];
+  PHASES.forEach((ph,i)=>rows.push([`Ph${i} – ${ph.name}`,fmt(devPhaseStart(i)),fmt(devPhaseEnd(i)),Math.round(n[i]*devDays),"","",ph.desc]));
+  n.forEach((_,i)=>{const gd=devPhaseDate(i,1);rows.push([i===6?"G6 – SOP":i===5?"G5 – Model Fix":`G${i} – ${GATE_DESC[i]}`,fmt(gd),fmt(gd),0,"","",GATE_DESC[i]]);});
+  DEFAULT_TR.forEach((tr,i)=>{if(!trVisible[i])return;const d=devPhaseDate(tr.phase,trPos[i]);rows.push([`${tr.id} – ${tr.desc}`,fmt(d),fmt(d),0,"","",tr.desc]);});
+  dbList.forEach(b=>{const siblings=dbList.filter(x=>x.family===b.family).length;const lbl=buildLabel(b.family,b.seq,siblings);const ds=devPhaseDate(b.phase,b.s),de=devPhaseDate(b.phase,b.e);rows.push([lbl,fmt(ds),fmt(de),Math.round((de-ds)/864e5),"","","Robot Build"]);});
+  testBars.forEach(b=>{const ds=devPhaseDate(b.phase,b.s),de=devPhaseDate(b.phase,b.e);rows.push([b.id,fmt(ds),fmt(de),Math.round((de-ds)/864e5),"","","Testing"]);});
+  rows.push(["Ph7 – Launch",fmt(sopDate),fmt(launchEndDate),launchWeeks*7,"","","LRIP, GA, scale production ramp"]);
+  rows.push(["Ph8 – Sustain",fmt(launchEndDate),fmt(sustainEndDate),sustainWeeks*7,"","","Full-rate production"]);
+  const all=[metaRow,...rows];
+  const csv=all.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n");
+  const blob=new Blob([csv],{type:"text/csv"});const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");a.href=url;a.download="pdp_timeline.csv";a.click();URL.revokeObjectURL(url);
+}
+
+function importCSV(text,initSnap){
+  const lines=text.trim().split(/\r?\n/);if(!lines.length)return null;
+  function pf(line){const f=[];let cur="",inQ=false;for(let j=0;j<line.length;j++){const ch=line[j];if(ch==='"'){if(inQ&&line[j+1]==='"'){cur+='"';j++;}else inQ=!inQ;}else if(ch===','&&!inQ){f.push(cur);cur="";}else cur+=ch;}f.push(cur);return f;}
+  const ff=pf(lines[0]);
+  if((ff[0]||"").startsWith(CSV_META)){
+    try{
+      const meta=JSON.parse((ff[0]||"").slice(CSV_META.length));
+      const s=meta.snap;
+      return{snap:{pcts:Array.isArray(s.pcts)&&s.pcts.length===PHASES.length?s.pcts:[...DEFAULT_PCTS],trPos:s.trPos||DEFAULT_TR.map(r=>r.pos),trVisible:s.trVisible||DEFAULT_TR.map(()=>true),dbList:Array.isArray(s.dbList)?s.dbList:makeDefaultDbList(),testBars:Array.isArray(s.testBars)?s.testBars:null,anchor:frInp(s.anchor),durDays:s.durDays||Math.round(365.25*2),launchWeeks:s.launchWeeks||DEFAULT_LAUNCH_WK,sustainWeeks:s.sustainWeeks||DEFAULT_SUSTAIN_WK},mode:meta.mode,gran:meta.gran};
+    }catch{}
+  }
+  const header=lines[0].replace(/^\uFEFF/,"");
+  const cols=header.split(",").map(c=>c.replace(/^"|"$/g,"").trim());
+  const ni=cols.findIndex(c=>/task.?name/i.test(c)),si=cols.findIndex(c=>/start.?date/i.test(c)),ei=cols.findIndex(c=>/end.?date/i.test(c));
+  if(ni<0||si<0||ei<0)return null;
+  const rows=[];
+  for(let i=1;i<lines.length;i++){const line=lines[i];if(!line.trim())continue;const fields=pf(line);const name=(fields[ni]||"").trim(),ss=(fields[si]||"").trim(),es=(fields[ei]||"").trim();if(!name||!ss)continue;const start=new Date(ss),end=es?new Date(es):start;if(isNaN(start))continue;rows.push({name,start,end:isNaN(end)?start:end});}
+  if(!rows.length)return null;
+  const pr=PHASES.map((_,i)=>rows.find(r=>new RegExp(`Ph${i}[\\s–-]`,"i").test(r.name)));
+  const ph0=pr[0],ph6=pr[6];if(!ph0||!ph6)return null;
+  const startDate=ph0.start,sopDate=addD(ph6.end,1);
+  const durDays=Math.max(7,Math.round((sopDate-startDate)/864e5));
+  let pcts=[...DEFAULT_PCTS];
+  if(pr.every(Boolean)){const rd=pr.map(r=>Math.max(1,Math.round((r.end-r.start)/864e5)+1));const total=rd.reduce((a,b)=>a+b,0);pcts=rd.map(d=>d/total);}
+  const lr=rows.find(r=>/Ph7|Launch/i.test(r.name)),sr=rows.find(r=>/Ph8|Sustain/i.test(r.name));
+  return{snap:{...initSnap,pcts,anchor:startDate,durDays,launchWeeks:lr?Math.max(4,Math.round((lr.end-lr.start)/864e5/7)):DEFAULT_LAUNCH_WK,sustainWeeks:sr?Math.max(4,Math.round((sr.end-sr.start)/864e5/7)):DEFAULT_SUSTAIN_WK},mode:"forward",gran:"quarterly"};
+}
+
+function useUndoable(initial){
+  const[idx,setIdx]=useState(0);const history=useRef([initial]);
+  const current=history.current[idx];
+  const push=useCallback(ns=>{history.current=history.current.slice(0,idx+1);history.current.push(ns);if(history.current.length>MAX_HISTORY+1)history.current.shift();setIdx(history.current.length-1);},[idx]);
+  const undo=useCallback(()=>{if(idx>0)setIdx(i=>i-1);},[idx]);
+  const redo=useCallback(()=>{if(idx<history.current.length-1)setIdx(i=>i+1);},[idx]);
+  return{current,push,undo,redo,canUndo:idx>0,canRedo:idx<history.current.length-1};
+}
+
+// Icons
+function HouseIcon({sz=16,c}){return<svg width={sz} height={sz} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z"/><path d="M9 21V12h6v9"/></svg>;}
+function SunIcon({sz=15,c="#f0a500"}){return<svg width={sz} height={sz} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.2" strokeLinecap="round"><circle cx="12" cy="12" r="4.5"/>{[0,45,90,135,180,225,270,315].map(deg=>{const rad=deg*Math.PI/180,ax=12+7.5*Math.sin(rad),ay=12-7.5*Math.cos(rad),bx=12+10*Math.sin(rad),by=12-10*Math.cos(rad);return<line key={deg} x1={ax} y1={ay} x2={bx} y2={by}/>;})}</svg>;}
+function MoonIcon({sz=14,c="#8ab4d8"}){return<svg width={sz} height={sz} viewBox="0 0 24 24" fill={c} stroke="none"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>;}
+function UndoIcon({sz=14,c}){return<svg width={sz} height={sz} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="9 14 4 9 9 4"/><path d="M20 20v-7a4 4 0 00-4-4H4"/></svg>;}
+function RedoIcon({sz=14,c}){return<svg width={sz} height={sz} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 14 20 9 15 4"/><path d="M4 20v-7a4 4 0 014-4h12"/></svg>;}
+function UploadIcon({sz=14,c}){return<svg width={sz} height={sz} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>;}
+function BugIcon({sz=14,c}){return<svg width={sz} height={sz} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="13" r="4"/><path d="M12 9V3"/><path d="M4 10l3 2M20 10l-3 2M4 18l3-2M20 18l-3-2M8 6l-2-2M16 6l2-2"/></svg>;}
+function CameraIcon({sz=14,c}){return<svg width={sz} height={sz} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>;}
+function RefreshIcon({sz=14,c}){return<svg width={sz} height={sz} viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>;}
+
+// Bug report modal
+function BugModal({t,isDark,onClose}){
+  const[text,setText]=useState("");
+  function submit(){
+    if(!text.trim())return;
+    const subject=encodeURIComponent("PDP Timeline Bug Report");
+    const body=encodeURIComponent(text.trim());
+    window.open(`mailto:olewis@bostondynamics.com?subject=${subject}&body=${body}`);
+    onClose();
+  }
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center"}}
+      onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+      <div style={{background:t.panel,border:"1px solid "+t.border,borderRadius:10,padding:28,width:480,maxWidth:"90vw",boxShadow:"0 8px 32px rgba(0,0,0,0.35)"}}>
+        <div style={{fontSize:16,fontWeight:800,color:t.text,marginBottom:6,display:"flex",alignItems:"center",gap:8}}>
+          <BugIcon sz={18} c={t.textMuted}/> Report a Bug
+        </div>
+        <div style={{fontSize:13,color:t.textMuted,marginBottom:14}}>Describe the issue and your expected behavior. Clicking Submit will open your email client with this report addressed to the dev team.</div>
+        <textarea value={text} onChange={e=>setText(e.target.value)}
+          placeholder="Describe what happened, what you expected, and steps to reproduce…"
+          style={{width:"100%",height:140,background:t.inBg,border:"1px solid "+t.inBorder,color:t.inText,borderRadius:6,padding:"8px 10px",fontSize:13,outline:"none",resize:"vertical",fontFamily:"inherit"}}/>
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14}}>
+          <button onClick={onClose} style={{padding:"6px 16px",borderRadius:5,border:"1px solid "+t.border,cursor:"pointer",fontSize:13,fontWeight:600,background:t.btnBg,color:t.btnText}}>Cancel</button>
+          <button onClick={submit} disabled={!text.trim()} style={{padding:"6px 16px",borderRadius:5,border:"none",cursor:text.trim()?"pointer":"not-allowed",fontSize:13,fontWeight:700,background:t.btnAct,color:"#fff",opacity:text.trim()?1:0.5}}>Submit via Email</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Phase hover tooltip
+function PhaseTooltip({phase,idx,startDate,endDate,pct,devDays,t}){
+  return(
+    <div style={{position:"absolute",top:"110%",left:"50%",transform:"translateX(-50%)",background:t.ttBg,border:"1px solid "+t.ttBorder,borderRadius:7,padding:"10px 13px",zIndex:200,whiteSpace:"nowrap",pointerEvents:"none",boxShadow:"0 6px 20px rgba(0,0,0,0.28)",minWidth:210}}>
+      <div style={{fontWeight:800,marginBottom:4,fontSize:14,display:"flex",alignItems:"center",gap:7,color:t.text}}>
+        <span style={{display:"inline-block",width:10,height:10,backgroundColor:phase.color,borderRadius:2}}/>
+        Ph{idx}: {phase.name}
+      </div>
+      <div style={{fontSize:12,color:t.textMuted,marginBottom:2}}>{fmtD(startDate)} → {fmtD(endDate)}</div>
+      <div style={{fontSize:12,color:t.textMuted,marginBottom:4}}>{fmtW(Math.round(pct*devDays/7))} &nbsp;·&nbsp; {(pct*100).toFixed(1)}% of dev</div>
+      <div style={{fontSize:12,color:t.textDim,lineHeight:1.5,maxWidth:220}}>{phase.desc}</div>
+    </div>
+  );
+}
+
+// Diamond
+function Diamond({x,label,sub,color,sz=12,tc,sc,date,desc,t,onDragStart,onDelete}){
+  const[hov,setHov]=useState(false);const timer=useRef(null);
+  function enter(){clearTimeout(timer.current);setHov(true);}
+  function leave(){timer.current=setTimeout(()=>setHov(false),150);}
+  useEffect(()=>()=>clearTimeout(timer.current),[]);
+  const d=sz*1.6,pts=(d/2)+",1 "+(d-1)+","+(d/2)+" "+(d/2)+","+(d-1)+" 1,"+(d/2);
+  return(
+    <div style={{position:"absolute",left:pc(x),transform:"translateX(-50%)",display:"inline-flex",flexDirection:"column",alignItems:"center",top:0,zIndex:hov?60:5,cursor:onDragStart?"ew-resize":"default"}}
+      onMouseEnter={enter} onMouseLeave={leave} onMouseDown={onDragStart}>
+      {hov&&date&&(
+        <div onMouseEnter={enter} onMouseLeave={leave} style={{position:"absolute",bottom:"100%",left:"50%",transform:"translateX(-50%)",paddingBottom:10,zIndex:300,pointerEvents:"all",display:"flex",flexDirection:"column",alignItems:"center"}}>
+          <div style={{background:t.ttBg,border:"1px solid "+t.ttBorder,borderRadius:6,padding:"7px 11px",whiteSpace:"nowrap",boxShadow:"0 4px 16px rgba(0,0,0,0.28)"}}>
+            <div style={{fontSize:13,fontWeight:800,color:t.text,marginBottom:3,display:"flex",alignItems:"center",gap:6}}>
+              <svg width={10} height={10} viewBox="0 0 10 10"><polygon points="5,0.5 9.5,5 5,9.5 0.5,5" fill={color}/></svg>
+              {label}{sub&&<span style={{fontWeight:500,color:t.textMuted}}>· {sub}</span>}
+            </div>
+            {desc&&<div style={{fontSize:12,color:t.textMuted,marginBottom:4}}>{desc}</div>}
+            <div style={{fontSize:13,fontWeight:700,color:t.text,borderTop:"1px solid "+t.border,paddingTop:4,marginTop:2}}>📅 {fmtD(date)}</div>
+            {onDelete&&<div onMouseDown={e=>{e.stopPropagation();onDelete();setHov(false);}} style={{marginTop:6,paddingTop:6,borderTop:"1px solid "+t.ttBorder,fontSize:11,color:"#e05a5a",cursor:"pointer",textAlign:"center",fontWeight:700}}>🗑 Remove milestone</div>}
+          </div>
+        </div>
+      )}
+      <svg width={d} height={d} viewBox={"0 0 "+d+" "+d} overflow="visible" style={{marginTop:18}}>
+        <polygon points={pts} fill={color} stroke={hov?"rgba(255,255,255,0.6)":"rgba(0,0,0,0.35)"} strokeWidth={hov?2:1}/>
+      </svg>
+      <div style={{fontSize:10,color:tc,fontWeight:700,whiteSpace:"nowrap",marginTop:3,textAlign:"center",lineHeight:1.3}}>
+        {label}{sub&&<div style={{fontSize:9,color:sc,fontWeight:400}}>{sub}</div>}
+      </div>
+    </div>
+  );
+}
+
+// Generic draggable bar (used for builds and testing)
+function DragBar({x1,x2,label,dateStart,dateEnd,t,onDragLeft,onDragRight,onDragBody,onDelete,onSplit,barColor,isDark}){
+  const[hov,setHov]=useState(false);const timer=useRef(null);
+  function enter(){clearTimeout(timer.current);setHov(true);}
+  function leave(){timer.current=setTimeout(()=>setHov(false),150);}
+  useEffect(()=>()=>clearTimeout(timer.current),[]);
+  if(x2<=x1)return null;
+  const HW=14;
+  const bg=barColor||"#b94a08";
+  const bgHov=barColor?barColor+"cc":"#d4550a";
+  const handleCol=isDark?"rgba(255,255,255,0.12)":"rgba(0,0,0,0.14)";
+  return(
+    <div style={{position:"absolute",left:pc(x1),width:pc(x2-x1),top:0,zIndex:hov?50:5,height:BUILD_BAR_H+20}} onMouseEnter={enter} onMouseLeave={leave}>
+      {hov&&(
+        <div onMouseEnter={enter} onMouseLeave={leave} style={{position:"absolute",bottom:"100%",left:"50%",transform:"translateX(-50%)",paddingBottom:10,zIndex:300,pointerEvents:"all"}}>
+          <div style={{background:t.ttBg,border:"1px solid "+t.ttBorder,borderRadius:6,padding:"7px 11px",whiteSpace:"nowrap",boxShadow:"0 4px 16px rgba(0,0,0,0.28)"}}>
+            <div style={{fontSize:13,fontWeight:800,color:t.text,marginBottom:4,display:"flex",alignItems:"center",gap:6}}><div style={{width:10,height:10,backgroundColor:bg,borderRadius:2}}/>{label}</div>
+            <div style={{fontSize:12,color:t.textMuted,marginBottom:1}}>Start: <span style={{color:t.text,fontWeight:600}}>{fmtD(dateStart)}</span></div>
+            <div style={{fontSize:12,color:t.textMuted,marginBottom:6}}>End: <span style={{color:t.text,fontWeight:600}}>{fmtD(dateEnd)}</span></div>
+            <div style={{display:"flex",gap:6,borderTop:"1px solid "+t.ttBorder,paddingTop:6}}>
+              {onSplit&&<div onMouseDown={e=>{e.stopPropagation();onSplit();setHov(false);}} style={{fontSize:11,color:"#3a9ad0",cursor:"pointer",fontWeight:700,padding:"2px 6px",borderRadius:3,border:"1px solid #3a9ad0"}}>✂ Split</div>}
+              {onDelete&&<div onMouseDown={e=>{e.stopPropagation();onDelete();}} style={{fontSize:11,color:"#e05a5a",cursor:"pointer",fontWeight:700,padding:"2px 6px",borderRadius:3,border:"1px solid #e05a5a"}}>🗑 Delete</div>}
+            </div>
+          </div>
+        </div>
+      )}
+      <div onMouseDown={onDragLeft} style={{position:"absolute",left:0,top:0,width:HW,height:BUILD_BAR_H,cursor:"ew-resize",zIndex:10,display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{width:2,height:BUILD_BAR_H*0.5,background:handleCol,borderRadius:2}}/></div>
+      <div onMouseDown={onDragBody} style={{position:"absolute",left:HW,right:HW,top:0,height:BUILD_BAR_H,backgroundColor:hov?bgHov:bg,borderRadius:4,display:"flex",alignItems:"center",justifyContent:"center",cursor:"grab",boxShadow:"inset 0 2px 0 rgba(255,255,255,0.14)",transition:"background 0.15s"}}><span style={{fontSize:12,color:"#fff",fontWeight:700,whiteSpace:"nowrap",pointerEvents:"none"}}>{label}</span></div>
+      <div onMouseDown={onDragRight} style={{position:"absolute",right:0,top:0,width:HW,height:BUILD_BAR_H,cursor:"ew-resize",zIndex:10,display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{width:2,height:BUILD_BAR_H*0.5,background:handleCol,borderRadius:2}}/></div>
+    </div>
+  );
+}
+
+function LegendItem({shape,color,label,tc}){return<div style={{display:"flex",alignItems:"center",gap:4}}>{shape==="diamond"?<svg width={11} height={11} viewBox="0 0 11 11"><polygon points="5.5,0.5 10.5,5.5 5.5,10.5 0.5,5.5" fill={color}/></svg>:<div style={{width:18,height:9,backgroundColor:color,borderRadius:2}}/>}<span style={{fontSize:11,color:tc,whiteSpace:"nowrap"}}>{label}</span></div>;}
+
+function EditCell({value,onCommit,width=90,suffix,t}){
+  const[local,setLocal]=useState(String(value));
+  useEffect(()=>setLocal(String(value)),[value]);
+  return<div style={{display:"flex",alignItems:"center",gap:6,flexShrink:0}}>
+    <input type="number" value={local} min={1}
+      onChange={e=>{setLocal(e.target.value);const n=Number(e.target.value);if(!isNaN(n)&&n>0)onCommit(n);}}
+      onBlur={e=>{const n=Number(e.target.value);if(!isNaN(n)&&n>0)onCommit(n);}}
+      onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
+      style={{width,background:t.editBg,border:"1px solid "+t.border,color:t.text,fontSize:14,fontWeight:700,textAlign:"left",outline:"none",padding:"5px 8px",borderRadius:4}}/>
+    <span style={{fontSize:12,color:t.textMuted,flexShrink:0,minWidth:16}}>{suffix}</span>
+  </div>;
+}
+
+function DateCell({date,onChange,t,isDark,readOnly}){
+  if(readOnly)return<span style={{fontSize:13,color:t.textMuted,width:120,display:"inline-block",padding:"5px 0",flexShrink:0}}>{fmtD(date)}</span>;
+  return<input key={toInp(date)} type="date" defaultValue={toInp(date)}
+    onBlur={e=>{if(e.target.value)onChange(e.target.value);}}
+    onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
+    style={{background:t.editBg,border:"1px solid "+t.border,color:t.text,fontSize:13,outline:"none",padding:"5px 8px",borderRadius:4,width:120,textAlign:"left",colorScheme:isDark?"dark":"light",flexShrink:0}}/>;
+}
+
+function ScenarioTable({scenarios,loading,saveError,setSaveError,scenarioName,setScenarioName,onSave,onOverwrite,onRestore,onDelete,onRename,t,isDark,showSaveForm}){
+  const[confirmDel,setConfirmDel]=useState(null);
+  const[confirmOver,setConfirmOver]=useState(null);
+  const[renaming,setRenaming]=useState(null);
+  const[renameVal,setRenameVal]=useState("");
+  function smBtn(danger){return{padding:"3px 10px",borderRadius:4,border:"1px solid "+(danger?t.dangerText:t.border),cursor:"pointer",fontSize:12,fontWeight:600,background:danger?(isDark?t.dangerBg:"#fff4f4"):t.btnBg,color:danger?t.dangerText:t.btnText};}
+  const thS={fontSize:11,color:t.rowLbl,textTransform:"uppercase",letterSpacing:"0.6px",padding:"0 10px 8px 0",textAlign:"left",fontWeight:600,borderBottom:"2px solid "+t.border,whiteSpace:"nowrap"};
+  const tdS={fontSize:13,color:t.textMuted,padding:"7px 10px 7px 0",borderBottom:"1px solid "+t.border,verticalAlign:"middle"};
+  return(
+    <div style={{background:t.panel,borderRadius:7,border:"1px solid "+t.border,padding:"16px 20px",marginBottom:12}}>
+      <div style={{fontSize:13,color:t.textMuted,fontWeight:700,marginBottom:12,textTransform:"uppercase",letterSpacing:0.4}}>Saved Scenarios</div>
+      {showSaveForm&&(
+        <div style={{display:"flex",gap:8,marginBottom:6,alignItems:"center"}}>
+          <input value={scenarioName} onChange={e=>{setScenarioName(e.target.value);if(saveError)setSaveError("");}}
+            onKeyDown={e=>{if(e.key==="Enter")onSave();}} placeholder="Enter a name for this scenario…"
+            style={{flexGrow:1,background:isDark?"#0e1b2d":"#ffffff",border:"1px solid "+(saveError?"#e74c3c":t.inBorder),color:t.inText,padding:"5px 10px",borderRadius:4,fontSize:13,outline:"none"}}/>
+          <button onClick={onSave} style={{padding:"5px 16px",borderRadius:4,border:"none",cursor:"pointer",fontWeight:700,fontSize:13,background:t.btnAct,color:"#fff",whiteSpace:"nowrap"}}>Save Scenario</button>
+        </div>
+      )}
+      {saveError&&showSaveForm&&<div style={{fontSize:12,color:t.dangerText,marginBottom:10}}>{saveError}</div>}
+      {loading?<div style={{fontSize:13,color:t.textDim,padding:"10px 0"}}>Loading…</div>
+      :scenarios.length===0?<div style={{fontSize:13,color:t.textDim,padding:"10px 0",fontStyle:"italic"}}>No saved scenarios yet. Open a timeline and use the Save Scenario option.</div>
+      :(
+        <table style={{width:"100%",borderCollapse:"collapse"}}>
+          <thead><tr>
+            <th style={thS}>Name</th><th style={thS}>Created</th><th style={thS}>Last Modified</th>
+            <th style={{...thS,textAlign:"right",paddingRight:0}}>Actions</th>
+          </tr></thead>
+          <tbody>
+            {[...scenarios].sort((a,b)=>b.modified-a.modified).map(sc=>{
+              const isConf=confirmDel===sc.key,isOver=confirmOver===sc.key,isRen=renaming===sc.key;
+              return(
+                <tr key={sc.key} style={{background:isConf||isOver?(isDark?t.dangerBg:"#fff8f8"):"transparent"}}>
+                  <td style={{...tdS,color:t.text,fontWeight:600}}>
+                    {isRen?(<div style={{display:"flex",gap:5,alignItems:"center"}}>
+                      <input value={renameVal} onChange={e=>setRenameVal(e.target.value)}
+                        onKeyDown={e=>{if(e.key==="Enter"){if(renameVal.trim()){onRename(sc.key,renameVal.trim());setRenaming(null);}}if(e.key==="Escape")setRenaming(null);}}
+                        autoFocus style={{flexGrow:1,background:isDark?"#0e1b2d":"#fff",border:"1px solid "+t.inBorder,color:t.inText,padding:"3px 7px",borderRadius:3,fontSize:13,outline:"none"}}/>
+                      <button onClick={()=>{if(renameVal.trim()){onRename(sc.key,renameVal.trim());setRenaming(null);}}} style={{padding:"3px 9px",borderRadius:3,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:t.btnAct,color:"#fff"}}>Save</button>
+                      <button onClick={()=>setRenaming(null)} style={smBtn(false)}>Cancel</button>
+                    </div>):sc.name}
+                  </td>
+                  <td style={tdS}>{fmtDT(sc.created)}</td>
+                  <td style={tdS}>{fmtDT(sc.modified)}</td>
+                  <td style={{...tdS,textAlign:"right",paddingRight:0}}>
+                    {isConf?(<div style={{display:"flex",gap:5,justifyContent:"flex-end",alignItems:"center"}}>
+                      <span style={{fontSize:12,color:t.dangerText,fontWeight:600}}>Delete "{sc.name}"?</span>
+                      <button onClick={()=>{onDelete(sc.key);setConfirmDel(null);}} style={{padding:"3px 10px",borderRadius:4,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:t.dangerText,color:"#fff"}}>Confirm</button>
+                      <button onClick={()=>setConfirmDel(null)} style={smBtn(false)}>Cancel</button>
+                    </div>):isOver?(<div style={{display:"flex",gap:5,justifyContent:"flex-end",alignItems:"center"}}>
+                      <span style={{fontSize:12,color:t.dangerText,fontWeight:600}}>Overwrite "{sc.name}"?</span>
+                      <button onClick={()=>{onOverwrite(sc.key);setConfirmOver(null);}} style={{padding:"3px 10px",borderRadius:4,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:t.dangerText,color:"#fff"}}>Confirm</button>
+                      <button onClick={()=>setConfirmOver(null)} style={smBtn(false)}>Cancel</button>
+                    </div>):(<div style={{display:"flex",gap:5,justifyContent:"flex-end"}}>
+                      <button onClick={()=>onRestore(sc)} style={smBtn(false)}>Load</button>
+                      {showSaveForm&&<button onClick={()=>{setConfirmOver(sc.key);setConfirmDel(null);}} style={smBtn(false)}>Overwrite</button>}
+                      <button onClick={()=>{setRenaming(sc.key);setRenameVal(sc.name);}} style={smBtn(false)}>Rename</button>
+                      <button onClick={()=>{setConfirmDel(sc.key);setConfirmOver(null);}} style={smBtn(true)}>Delete</button>
+                    </div>)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+// ── Error Boundary ────────────────────────────────────────────────────────────
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = {error: null}; }
+  static getDerivedStateFromError(error) { return {error}; }
+  render() {
+    if (this.state.error) return (
+      <div style={{padding:40, textAlign:"center", fontFamily:"Inter,system-ui,sans-serif"}}>
+        <div style={{fontSize:18, fontWeight:700, color:"#c0392b", marginBottom:12}}>Something went wrong</div>
+        <div style={{fontSize:13, color:"#526880", marginBottom:20}}>{String(this.state.error)}</div>
+        <button onClick={()=>this.setState({error:null})}
+          style={{padding:"8px 20px", borderRadius:5, border:"none", cursor:"pointer", background:"#1e60a5", color:"#fff", fontWeight:700, fontSize:14}}>
+          Try Again
+        </button>
+      </div>
+    );
+    return this.props.children;
+  }
+}
+
+// ── Main App ──────────────────────────────────────────────────────────────────
+function App(){
+  const defaultDurDays=useMemo(()=>Math.round(365.25*2),[]);
+  const defaultSop=useMemo(()=>addY(today0(),2.5),[]);
+  const defaultStartDate=useMemo(()=>addD(defaultSop,-defaultDurDays),[]);
+
+  // Test bars stored as phase-relative fractions; values > 1.0 extend into subsequent phases.
+  const initTestBars=useMemo(()=>{
+    const ph4Months=(DEFAULT_PCTS[4]*defaultDurDays/7)/4.33;
+    const ph5Months=(DEFAULT_PCTS[5]*defaultDurDays/7)/4.33;
+    return[
+      {key:"evt",id:"EVT",phase:4,s:0.82,e:0.82+2/ph4Months},
+      {key:"dvt",id:"DVT",phase:5,s:0.82,e:0.82+4/ph5Months},
+    ];
+  },[]);
+
+  const initSnap=useMemo(()=>({
+    pcts:[...DEFAULT_PCTS],trPos:DEFAULT_TR.map(r=>r.pos),
+    trVisible:DEFAULT_TR.map(()=>true),dbList:makeDefaultDbList(),
+    testBars:initTestBars,
+    anchor:defaultStartDate,durDays:defaultDurDays,
+    launchWeeks:DEFAULT_LAUNCH_WK,sustainWeeks:DEFAULT_SUSTAIN_WK,
+  }),[]);
+
+  const{current:snap,push:pushSnap,undo,redo,canUndo,canRedo}=useUndoable(initSnap);
+  const[isDark,setDark]=useState(false);
+  const[mode,setMode]=useState(null);
+  const[gran,setGran]=useState("quarterly");
+  const[confirmReset,setConfirmReset]=useState(false);
+  const[scenarios,setScenarios]=useState([]);
+  const[scenarioName,setScName]=useState("");
+  const[saveError,setSaveError]=useState("");
+  const[importError,setImportError]=useState("");
+  const[importSuccess,setImportSuccess]=useState("");
+  const[showBug,setShowBug]=useState(false);
+  const[todayDate,setTodayDate]=useState(today0);
+  const importInputRef=useRef(null);
+  const timelineRef=useRef(null);
+  const drag=useRef(null),dragSnap=useRef(null),liveSnap=useRef(null);
+  const[,forceUpdate]=useState(0);
+
+  // Use the live drag position for rendering, but only commit to undo history on mouseup.
+  const renderSnap=drag.current&&liveSnap.current?liveSnap.current:snap;
+  const{pcts,trPos,trVisible,dbList,testBars,anchor,durDays,launchWeeks,sustainWeeks}=renderSnap;
+  function ap(p){pushSnap({...snap,...p});}
+  function setPcts(v){ap({pcts:typeof v==="function"?v(pcts):v});}
+  function setTrPos(v){ap({trPos:typeof v==="function"?v(trPos):v});}
+  function setTrVisible(v){ap({trVisible:typeof v==="function"?v(trVisible):v});}
+  function setDbList(v){ap({dbList:typeof v==="function"?v(dbList):v});}
+  function setTestBars(v){ap({testBars:typeof v==="function"?v(testBars):v});}
+  function setAnchor(v){ap({anchor:v});}
+  function setDurDays(v){ap({durDays:v});}
+  function setLaunchWk(v){ap({launchWeeks:v});}
+  function setSustainWk(v){ap({sustainWeeks:v});}
+
+  // Refresh Today
+  function refreshToday(){setTodayDate(today0());}
+  useEffect(()=>{const id=setInterval(()=>setTodayDate(today0()),60000);return()=>clearInterval(id);},[]);
+
+  const t=isDark?DARK:LIGHT;
+  const n=normP(pcts),st=mkSt(n);
+  const devDays=durDays,launchDays=launchWeeks*7,sustainDays=sustainWeeks*7;
+  const startDate=mode==="backward"?addD(anchor,-devDays):anchor;
+  const sopDate=addD(startDate,devDays);
+  const launchEndDate=addD(sopDate,launchDays);
+  const sustainEndDate=addD(launchEndDate,sustainDays);
+  const dspPostDays=Math.min(launchDays+sustainDays,POST_SOP_DISPLAY);
+  const dspTotalDays=devDays+dspPostDays;
+  const dspDevFrac=devDays/dspTotalDays;
+  const dspLaunchDays=Math.min(launchDays,POST_SOP_DISPLAY);
+  const dspSustainDays=Math.max(0,dspPostDays-dspLaunchDays);
+  const dspLaunchFrac=dspLaunchDays/dspTotalDays;
+  const dspSustainFrac=dspSustainDays/dspTotalDays;
+  const displayEndDate=addD(sopDate,dspPostDays);
+  const truncated=dspPostDays<launchDays+sustainDays;
+
+  function dspDevPos(ph,rel){return dspDevFrac*(st[ph]+n[ph]*rel);}
+  function devPhaseDate(ph,rel){return addD(startDate,Math.round(devDays*(st[ph]+n[ph]*rel)));}
+  function devPhaseStart(idx){return addD(startDate,Math.round(devDays*st[idx]));}
+  function devPhaseEnd(idx){return addD(startDate,Math.round(devDays*(st[idx]+n[idx])));}
+
+  const todayDispFrac=mode!=null?(todayDate-startDate)/dspTotalDays:-1;
+  const showToday=mode!=null&&todayDispFrac>=0&&todayDispFrac<=1;
+  const showG7=launchEndDate<=displayEndDate;
+
+  const ticks=useMemo(()=>mode!=null?getTicks(startDate,displayEndDate,gran):[],[startDate?.getTime(),displayEndDate?.getTime(),gran,mode]);
+  const approxYr=durDays/365.25;
+  const actYrBtn=[1,2,3,4,5].find(y=>Math.abs(approxYr-y)<0.05)||null;
+  const planningEnd=dspDevFrac*(st[3]||0),developEnd=dspDevFrac;
+
+  function setPhaseWeeks(idx,wks){
+    wks=Math.max(1,Math.round(wks));
+    const maxWks=Math.floor((devDays/7)*0.95);
+    wks=Math.min(wks,maxWks);
+    const nf=clamp(wks/(devDays/7),0.01,0.95),of=n[idx];
+    if(Math.abs(nf-of)<0.001)return;
+    const sc=(1-nf)/Math.max(0.001,1-of);
+    setPcts(n.map((v,i)=>i===idx?nf:v*sc));
+  }
+  function setPhasePercent(idx,p){
+    const maxPct=95;
+    p=clamp(p,0.5,maxPct);
+    setPhaseWeeks(idx,p/100*(devDays/7));
+  }
+  function setPhaseStartDate(idx,v){
+    const nd=frInp(v);
+    if(idx===0){const d=Math.max(7,Math.round((sopDate-nd)/864e5));setDurDays(d);if(mode==="forward")setAnchor(nd);}
+    else{const ps=devPhaseStart(idx-1);setPhaseWeeks(idx-1,Math.max(1,Math.round((nd-ps)/864e5))/7);}
+  }
+  function setPhaseEndDate(idx,v){
+    const nd=frInp(v);
+    if(idx===PHASES.length-1){setDurDays(Math.max(7,Math.round((nd-startDate)/864e5)));}
+    else{const ps=devPhaseStart(idx);setPhaseWeeks(idx,Math.max(1,Math.round((nd-ps)/864e5))/7);}
+  }
+
+  function getLabelForBar(bar,list){const s=list.filter(b=>b.family===bar.family).length;return buildLabel(bar.family,bar.seq,s);}
+  function deleteDb(key){setDbList(prev=>{const r=prev.find(b=>b.key===key);if(!r)return prev;return resequence(prev.filter(b=>b.key!==key),r.family);});}
+  function splitDb(key){
+    setDbList(prev=>{
+      const b=prev.find(x=>x.key===key);if(!b)return prev;
+      const mid=(b.s+b.e)/2,gap=0.03,nk=maxKey(prev);
+      const b1={...b,e:mid-gap/2},b2={...b,key:nk,s:mid+gap/2};
+      let r=prev.map(x=>x.key===key?b1:x);
+      r.splice(r.findIndex(x=>x.key===key)+1,0,b2);
+      return resequence(r,b.family);
+    });
+  }
+  function deleteTr(idx){setTrVisible(prev=>{const np=[...prev];np[idx]=false;return np;});}
+  function deleteTestBar(key){setTestBars(prev=>prev.filter(b=>b.key!==key));}
+  function doReset(){pushSnap({...initSnap});setConfirmReset(false);}
+
+  // localStorage
+  const LS_KEY="pdp_scenarios";
+  function loadScenarios(){try{const raw=localStorage.getItem(LS_KEY);setScenarios(raw?JSON.parse(raw):[]);}catch{setScenarios([]);}}
+  useEffect(()=>{loadScenarios();},[]);
+  function saveList(list){localStorage.setItem(LS_KEY,JSON.stringify(list));setScenarios(list);}
+
+  function saveScenario(){
+    setSaveError("");const name=scenarioName.trim();
+    if(!name){setSaveError("Please enter a name.");return;}
+    const existing=scenarios.find(s=>s.name===name);
+    if(existing){setSaveError("A scenario with that name already exists. Use Overwrite to replace it.");return;}
+    const now=Date.now();
+    const payload={...snap,anchor:toInp(anchor),mode,gran};
+    saveList([...scenarios,{key:"sc:"+now,name,...payload,created:now,modified:now}]);
+    setScName("");
+  }
+  function overwriteScenario(key){
+    const now=Date.now();
+    const payload={...snap,anchor:toInp(anchor),mode,gran};
+    saveList(scenarios.map(s=>s.key===key?{...s,...payload,modified:now}:s));
+  }
+  function restoreScenario(sc){
+    pushSnap({
+      pcts:Array.isArray(sc.pcts)&&sc.pcts.length===PHASES.length?sc.pcts:[...DEFAULT_PCTS],
+      trPos:sc.trPos||DEFAULT_TR.map(r=>r.pos),
+      trVisible:sc.trVisible||DEFAULT_TR.map(()=>true),
+      dbList:sc.dbList||makeDefaultDbList(),
+      testBars:sc.testBars||initTestBars,
+      anchor:frInp(sc.anchor),
+      durDays:sc.durDays,
+      launchWeeks:sc.launchWeeks||DEFAULT_LAUNCH_WK,
+      sustainWeeks:sc.sustainWeeks||DEFAULT_SUSTAIN_WK,
+    });
+    if(sc.mode)setMode(sc.mode);
+    if(sc.gran)setGran(sc.gran);
+  }
+  function deleteScenario(key){saveList(scenarios.filter(s=>s.key!==key));}
+  function renameScenario(key,newName){
+    if(scenarios.find(s=>s.name===newName&&s.key!==key)){setSaveError("That name is already taken.");return;}
+    saveList(scenarios.map(s=>s.key===key?{...s,name:newName,modified:Date.now()}:s));
+  }
+
+  function handleImportFile(e){
+    const file=e.target.files?.[0];if(!file)return;
+    setImportError("");setImportSuccess("");
+    const reader=new FileReader();
+    reader.onload=evt=>{
+      try{
+        const result=importCSV(evt.target.result,initSnap);
+        if(!result){setImportError("Could not parse CSV.");return;}
+        pushSnap(result.snap);setMode(result.mode||"forward");
+        if(result.gran)setGran(result.gran);
+        setImportSuccess("Imported!");setTimeout(()=>setImportSuccess(""),3000);
+      }catch(err){setImportError("Import failed: "+err.message);}
+    };
+    reader.readAsText(file);e.target.value="";
+  }
+
+  function handleExportCSV(){
+    exportCSVFull(snap,mode,gran,startDate,sopDate,launchEndDate,sustainEndDate,devDays,n,devPhaseStart,devPhaseEnd,devPhaseDate,dbList,trVisible,trPos,launchWeeks,sustainWeeks,testBars||[]);
+  }
+
+  async function handleExportPNG(){
+    if(!timelineRef.current)return;
+    try{
+      const canvas=await html2canvas(timelineRef.current,{backgroundColor:isDark?"#0b1220":"#ffffff",scale:2,useCORS:true,logging:false});
+      const url=canvas.toDataURL("image/png");
+      const a=document.createElement("a");a.href=url;a.download="pdp_timeline.png";a.click();
+    }catch(err){alert("PNG export failed: "+err.message);}
+  }
+
+  // Drag
+  useEffect(()=>{
+    function onMove(e){
+      const d=drag.current;if(!d)return;
+      const rect=timelineRef.current?.getBoundingClientRect();if(!rect)return;
+      const dx=(e.clientX-d.x0)/rect.width;
+      const base=dragSnap.current,bn=normP(base.pcts);
+      let next=null;
+      if(d.type==="phase"){const sum=base.pcts.reduce((a,b)=>a+b,0);const delta=dx/dspDevFrac*sum,min=sum*0.02;const nA=d.p0[d.idx]+delta,nB=d.p0[d.idx+1]-delta;if(nA>=min&&nB>=min){const np=[...d.p0];np[d.idx]=nA;np[d.idx+1]=nB;next={...base,pcts:np};}}
+      else if(d.type==="tr"){const phW=dspDevFrac*bn[d.phase];const np=[...base.trPos];np[d.trIdx]=clamp(d.pos0+dx/phW,0.02,0.98);next={...base,trPos:np};}
+      else if(d.type==="build-left"){const phW=dspDevFrac*bn[d.phase];next={...base,dbList:base.dbList.map(b=>b.key===d.bKey?{...b,s:clamp(d.s0+dx/phW,0.01,d.e0-0.05)}:b)};}
+      else if(d.type==="build-right"){const phW=dspDevFrac*bn[d.phase];next={...base,dbList:base.dbList.map(b=>b.key===d.bKey?{...b,e:clamp(d.e0+dx/phW,d.s0+0.05,0.99)}:b)};}
+      else if(d.type==="build-body"){const phW=dspDevFrac*bn[d.phase];const span=d.e0-d.s0,newS=clamp(d.s0+dx/phW,0.01,0.99-span);next={...base,dbList:base.dbList.map(b=>b.key===d.bKey?{...b,s:newS,e:newS+span}:b)};}
+      else if(d.type==="test-left"){const phW=dspDevFrac*bn[d.phase];next={...base,testBars:base.testBars.map(b=>b.key===d.bKey?{...b,s:clamp(d.s0+dx/phW,0.01,d.e0-0.05)}:b)};}
+      else if(d.type==="test-right"){const phW=dspDevFrac*bn[d.phase];next={...base,testBars:base.testBars.map(b=>b.key===d.bKey?{...b,e:clamp(d.e0+dx/phW,d.s0+0.05,4.0)}:b)};}
+      else if(d.type==="test-body"){const phW=dspDevFrac*bn[d.phase];const span=d.e0-d.s0,newS=clamp(d.s0+dx/phW,0.01,4.0-span);next={...base,testBars:base.testBars.map(b=>b.key===d.bKey?{...b,s:newS,e:newS+span}:b)};}
+      if(next){liveSnap.current=next;}
+      forceUpdate(x=>x+1);
+    }
+    function onUp(){if(liveSnap.current)pushSnap(liveSnap.current);drag.current=null;liveSnap.current=null;dragSnap.current=null;forceUpdate(x=>x+1);}
+    window.addEventListener("mousemove",onMove);window.addEventListener("mouseup",onUp);
+    return()=>{window.removeEventListener("mousemove",onMove);window.removeEventListener("mouseup",onUp);};
+  },[dspDevFrac,n,snap]);
+
+  function startPhaseDrag(e,idx){e.preventDefault();dragSnap.current=snap;drag.current={type:"phase",idx,x0:e.clientX,p0:[...pcts]};}
+  function startTrDrag(e,ti){e.preventDefault();dragSnap.current=snap;drag.current={type:"tr",trIdx:ti,phase:DEFAULT_TR[ti].phase,x0:e.clientX,pos0:trPos[ti]};}
+  function startBuildDrag(e,bKey,side,b){e.preventDefault();dragSnap.current=snap;drag.current={type:"build-"+side,bKey,phase:b.phase,x0:e.clientX,s0:b.s,e0:b.e};}
+  function startTestDrag(e,bKey,side,b){e.preventDefault();dragSnap.current=snap;drag.current={type:"test-"+side,bKey,phase:b.phase,x0:e.clientX,s0:b.s,e0:b.e};}
+
+  useEffect(()=>{
+    function onKey(e){if((e.metaKey||e.ctrlKey)&&e.key==="z"){e.preventDefault();if(e.shiftKey)redo();else undo();}if((e.metaKey||e.ctrlKey)&&e.key==="y"){e.preventDefault();redo();}}
+    window.addEventListener("keydown",onKey);return()=>window.removeEventListener("keydown",onKey);
+  },[undo,redo]);
+
+  function switchMode(m){if(m===mode)return;setAnchor(m==="forward"?startDate:sopDate);setMode(m);}
+  function handleOtherDate(v){const d=frInp(v),nd=mode==="forward"?dBetw(anchor,d):dBetw(d,anchor);if(nd>=7)setDurDays(nd);}
+  const otherDate=mode==="forward"?sopDate:startDate;
+  const anchorLabel=mode==="forward"?"Start Date":"SOP Date (G6)";
+  const otherLabel=mode==="forward"?"SOP Date (G6)":"Calculated Start";
+
+  function btn(act,sm){return{padding:sm?"4px 12px":"5px 14px",borderRadius:4,border:"none",cursor:"pointer",fontWeight:700,fontSize:sm?13:14,background:act?t.btnAct:t.btnBg,color:act?"#fff":t.btnText,transition:"background 0.15s"};}
+  function inpS(dashed){return{background:t.inBg,border:"1px "+(dashed?"dashed":"solid")+" "+t.inBorder,color:dashed?(isDark?"#7098ba":"#4a70a0"):t.inText,padding:"5px 9px",borderRadius:4,fontSize:13,outline:"none",colorScheme:isDark?"dark":"light",textAlign:"left"};}
+  const rowLbl={fontSize:11,color:t.rowLbl,textTransform:"uppercase",letterSpacing:"0.7px",paddingLeft:2,display:"block",marginBottom:2};
+  const box={background:t.panel,borderRadius:7,border:"1px solid "+t.border,marginBottom:12};
+  function urBtn(en){return{padding:"4px 9px",borderRadius:4,border:"1px solid "+t.border,cursor:en?"pointer":"not-allowed",fontWeight:600,fontSize:13,background:en?t.undoBg:t.btnBg,color:en?t.text:t.textDim,display:"flex",alignItems:"center",gap:5,opacity:en?1:0.45,transition:"all 0.15s"};}
+  const prodDispItems=[{ph:PROD_PHASES[0],w:dspLaunchFrac,wks:launchWeeks},{ph:PROD_PHASES[1],w:dspSustainFrac,wks:sustainWeeks}].filter(i=>i.w>0.001);
+  const COL_SWATCH=14,COL_PHASE=120,COL_DATES=286,COL_WK=108,COL_SEP=20,COL_PCT=96;
+  const thStyle={fontSize:11,color:t.rowLbl,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.6px",padding:"0 0 6px 0",borderBottom:"2px solid "+t.border,whiteSpace:"nowrap",textAlign:"left"};
+
+  const header=(
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12,flexWrap:"wrap",gap:8}}>
+      <div style={{display:"flex",alignItems:"center",gap:10}}>
+        {mode!=null&&<button onClick={()=>setMode(null)} title="Home" style={{padding:"6px 8px",borderRadius:6,border:"1px solid "+t.border,cursor:"pointer",background:t.btnBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><HouseIcon sz={17} c={t.btnText}/></button>}
+        <div>
+          <div style={{fontSize:18,fontWeight:800,letterSpacing:0.3}}>Boston Dynamics Project Timeline Tool</div>
+          <div style={{fontSize:13,color:t.textMuted,marginTop:3}}>Product Development Process (PDP)</div>
+        </div>
+      </div>
+      <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+        {mode!=null&&<>
+          <button onClick={undo} disabled={!canUndo} style={urBtn(canUndo)} title="Undo (Ctrl+Z)"><UndoIcon sz={13} c={canUndo?t.text:t.textDim}/> Undo</button>
+          <button onClick={redo} disabled={!canRedo} style={urBtn(canRedo)} title="Redo (Ctrl+Y)">Redo <RedoIcon sz={13} c={canRedo?t.text:t.textDim}/></button>
+          <div style={{width:1,height:22,background:t.border,margin:"0 2px"}}/>
+          {confirmReset?(<div style={{display:"flex",alignItems:"center",gap:6,background:isDark?t.dangerBg:"#fff4f4",border:"1px solid "+t.dangerText,borderRadius:5,padding:"3px 8px"}}>
+            <span style={{fontSize:12,color:t.dangerText,fontWeight:600,whiteSpace:"nowrap"}}>Reset?</span>
+            <button onClick={doReset} style={{padding:"3px 10px",borderRadius:4,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:t.dangerText,color:"#fff"}}>Yes</button>
+            <button onClick={()=>setConfirmReset(false)} style={{padding:"3px 10px",borderRadius:4,border:"1px solid "+t.border,cursor:"pointer",fontSize:12,fontWeight:600,background:t.btnBg,color:t.btnText}}>No</button>
+          </div>):<button onClick={()=>setConfirmReset(true)} style={btn(false,true)}>Reset</button>}
+          <button onClick={handleExportCSV} style={{...btn(false,true),background:isDark?"#0e2a1a":"#e8f5ee",color:isDark?"#4caf80":"#1a7a40",border:"1px solid "+(isDark?"#1a4a2a":"#a8d5b8")}}>⬇ CSV</button>
+          <button onClick={handleExportPNG} style={{...btn(false,true),display:"flex",alignItems:"center",gap:5,background:isDark?"#0e1a2c":"#e8eef8",color:isDark?"#6a9ad4":"#2a5090",border:"1px solid "+(isDark?"#1b2e45":"#b0c8e8")}}><CameraIcon sz={13} c={isDark?"#6a9ad4":"#2a5090"}/> PNG</button>
+        </>}
+        <button onClick={()=>setShowBug(true)} style={{...btn(false,true),display:"flex",alignItems:"center",gap:5}} title="Report a bug"><BugIcon sz={13} c={t.btnText}/> Bug</button>
+        <div style={{display:"flex",borderRadius:5,overflow:"hidden",border:"1px solid "+t.border}}>
+          {[{v:false,icon:<SunIcon/>,lbl:"Light"},{v:true,icon:<MoonIcon/>,lbl:"Dark"}].map(item=>(
+            <button key={item.lbl} onClick={()=>setDark(item.v)} style={{padding:"5px 11px",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:5,fontSize:13,fontWeight:600,background:isDark===item.v?t.btnAct:t.btnBg,color:isDark===item.v?"#fff":t.btnText,transition:"background 0.15s"}}>{item.icon}{item.lbl}</button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
+  return(
+    <div style={{background:t.bg,color:t.text,fontFamily:"Inter,system-ui,sans-serif",minHeight:"100vh",padding:"14px 16px",userSelect:"none",boxSizing:"border-box"}}>
+      <input ref={importInputRef} type="file" accept=".csv" style={{display:"none"}} onChange={handleImportFile}/>
+      {showBug&&<BugModal t={t} isDark={isDark} onClose={()=>setShowBug(false)}/>}
+      {header}
+
+      {mode==null?(
+        <div style={{display:"flex",flexDirection:"column",alignItems:"center",padding:"28px 16px",gap:20}}>
+          <div style={{textAlign:"center"}}>
+            <div style={{fontSize:18,fontWeight:700,color:t.text,marginBottom:6}}>How would you like to schedule this program?</div>
+            <div style={{fontSize:14,color:t.textMuted}}>Choose a direction, import a CSV, or load a saved scenario below.</div>
+          </div>
+          <div style={{display:"flex",gap:14,flexWrap:"wrap",justifyContent:"center"}}>
+            {[{m:"forward",arrow:"→",title:"Work Forward",sub:"Set a start date,\nplan toward SOP",a:defaultStartDate},{m:"backward",arrow:"←",title:"Work Backward",sub:"Set a target SOP date,\ndetermine when to start",a:defaultSop}].map(item=>(
+              <button key={item.m} onClick={()=>{setMode(item.m);setAnchor(item.a);}}
+                style={{background:t.cardBg,border:"2px solid "+t.cardBorder,borderRadius:10,padding:"22px 30px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:10,minWidth:190,transition:"border-color 0.15s,background 0.15s"}}
+                onMouseEnter={e=>{e.currentTarget.style.borderColor="#1e60a5";e.currentTarget.style.background=t.cardHov;}}
+                onMouseLeave={e=>{e.currentTarget.style.borderColor=t.cardBorder;e.currentTarget.style.background=t.cardBg;}}>
+                <div style={{fontSize:34,color:"#3a7ad0",lineHeight:1}}>{item.arrow}</div>
+                <div style={{fontSize:16,fontWeight:700,color:t.text}}>{item.title}</div>
+                <div style={{fontSize:13,color:t.textMuted,textAlign:"center",lineHeight:1.6,whiteSpace:"pre-line"}}>{item.sub}</div>
+              </button>
+            ))}
+            <button onClick={()=>importInputRef.current?.click()}
+              style={{background:t.cardBg,border:"2px solid "+t.cardBorder,borderRadius:10,padding:"22px 30px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:10,minWidth:190,transition:"border-color 0.15s,background 0.15s"}}
+              onMouseEnter={e=>{e.currentTarget.style.borderColor="#1e60a5";e.currentTarget.style.background=t.cardHov;}}
+              onMouseLeave={e=>{e.currentTarget.style.borderColor=t.cardBorder;e.currentTarget.style.background=t.cardBg;}}>
+              <div style={{fontSize:34,color:"#3a7ad0",lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}><UploadIcon sz={34} c="#3a7ad0"/></div>
+              <div style={{fontSize:16,fontWeight:700,color:t.text}}>Import CSV</div>
+              <div style={{fontSize:13,color:t.textMuted,textAlign:"center",lineHeight:1.6}}>Load a previously exported timeline CSV</div>
+            </button>
+          </div>
+          {importError&&<div style={{fontSize:13,color:t.dangerText,background:isDark?t.dangerBg:"#fff4f4",border:"1px solid "+t.dangerText,borderRadius:6,padding:"8px 14px",maxWidth:600,textAlign:"center"}}>{importError}</div>}
+          {importSuccess&&<div style={{fontSize:13,color:"#1a7a40",background:isDark?"#0e2a1a":"#e8f5ee",border:"1px solid "+(isDark?"#1a4a2a":"#a8d5b8"),borderRadius:6,padding:"8px 14px",maxWidth:600,textAlign:"center"}}>{importSuccess}</div>}
+          <div style={{width:"100%",maxWidth:700}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}><div style={{flex:1,height:1,background:t.border}}/><span style={{fontSize:13,color:t.textMuted,whiteSpace:"nowrap"}}>Saved Scenarios</span><div style={{flex:1,height:1,background:t.border}}/></div>
+            <ScenarioTable scenarios={scenarios} loading={false} saveError={saveError} setSaveError={setSaveError}
+              scenarioName={scenarioName} setScenarioName={setScName}
+              onSave={saveScenario} onOverwrite={overwriteScenario}
+              onRestore={sc=>{restoreScenario(sc);setMode(sc.mode||"forward");}}
+              onDelete={deleteScenario} onRename={renameScenario} t={t} isDark={isDark} showSaveForm={false}/>
+          </div>
+        </div>
+      ):(
+        <div>
+          <ControlsBar
+            t={t} isDark={isDark} box={box} btn={btn} inpS={inpS}
+            mode={mode} switchMode={switchMode}
+            anchor={anchor} anchorLabel={anchorLabel} setAnchor={setAnchor}
+            otherDate={otherDate} otherLabel={otherLabel} handleOtherDate={handleOtherDate}
+            gran={gran} setGran={setGran}
+            actYrBtn={actYrBtn} setDurDays={setDurDays}
+            devDays={devDays} sopDate={sopDate}
+            refreshToday={refreshToday}
+          />
+
+          <TimelinePanel
+            t={t} isDark={isDark} box={box} timelineRef={timelineRef} rowLbl={rowLbl}
+            ticks={ticks} dspDevFrac={dspDevFrac} dspLaunchFrac={dspLaunchFrac}
+            todayDispFrac={todayDispFrac} showToday={showToday} showG7={showG7} truncated={truncated}
+            startDate={startDate} displayEndDate={displayEndDate} sopDate={sopDate} launchEndDate={launchEndDate}
+            planningEnd={planningEnd} developEnd={developEnd}
+            n={n} st={st} devDays={devDays} prodDispItems={prodDispItems}
+            dbList={dbList} testBars={testBars} trVisible={trVisible} trPos={trPos}
+            devPhaseDate={devPhaseDate} devPhaseStart={devPhaseStart} devPhaseEnd={devPhaseEnd} dspDevPos={dspDevPos}
+            getLabelForBar={getLabelForBar}
+            startPhaseDrag={startPhaseDrag} startTrDrag={startTrDrag}
+            startBuildDrag={startBuildDrag} startTestDrag={startTestDrag}
+            deleteDb={deleteDb} splitDb={splitDb} deleteTr={deleteTr} deleteTestBar={deleteTestBar}
+          />
+
+          {/* Phase Schedule */}
+          <div style={{...box,padding:"16px 20px"}}>
+            <div style={{fontSize:13,color:t.textMuted,fontWeight:700,marginBottom:10,textTransform:"uppercase",letterSpacing:0.4}}>Phase Schedule</div>
+            <div style={{display:"flex",alignItems:"flex-end",gap:10,paddingBottom:2,marginBottom:2}}>
+              <div style={{width:COL_SWATCH,flexShrink:0}}/><div style={{...thStyle,width:COL_PHASE,flexShrink:0}}>Phase</div>
+              <div style={{...thStyle,width:COL_DATES,flexShrink:0}}>Start → End</div><div style={{...thStyle,flexGrow:1}}/>
+              <div style={{...thStyle,width:COL_WK,flexShrink:0}}>Duration</div><div style={{width:COL_SEP,flexShrink:0}}/>
+              <div style={{...thStyle,width:COL_PCT,flexShrink:0}}>% of Dev</div>
+            </div>
+            {n.map((p,i)=>{const phase=PHASES[i];if(!phase)return null;
+              const phS=devPhaseStart(i),phE=devPhaseEnd(i);
+              const wks=Math.round(p*devDays/7),pct=parseFloat((p*100).toFixed(1));
+              const maxWks=Math.max(1,Math.floor((devDays/7)*0.95));
+              return(
+                <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"5px 0",borderBottom:"1px solid "+t.border}}>
+                  <div style={{width:COL_SWATCH,height:10,backgroundColor:phase.color,borderRadius:2,flexShrink:0}}/>
+                  <span style={{fontSize:13,fontWeight:700,color:t.text,width:COL_PHASE,flexShrink:0}}>Ph{i} {phase.name}</span>
+                  <div style={{display:"flex",alignItems:"center",gap:6,width:COL_DATES,flexShrink:0}}>
+                    <DateCell date={phS} onChange={v=>setPhaseStartDate(i,v)} t={t} isDark={isDark}/>
+                    <span style={{color:t.textMuted,fontSize:13}}>→</span>
+                    <DateCell date={phE} onChange={v=>setPhaseEndDate(i,v)} t={t} isDark={isDark} readOnly={i===PHASES.length-1}/>
+                  </div>
+                  <div style={{flexGrow:1}}/>
+                  <div style={{width:COL_WK,flexShrink:0}}><EditCell value={wks} onCommit={v=>setPhaseWeeks(i,Math.min(v,maxWks))} width={72} suffix="wk" t={t}/></div>
+                  <span style={{fontSize:16,color:t.textDim,fontWeight:200,width:COL_SEP,flexShrink:0,textAlign:"center"}}>/</span>
+                  <div style={{width:COL_PCT,flexShrink:0}}><EditCell value={pct} onCommit={v=>setPhasePercent(i,v)} width={60} suffix="%" t={t}/></div>
+                </div>
+              );
+            })}
+            <div style={{display:"flex",alignItems:"center",gap:8,padding:"7px 0 5px",borderBottom:"1px solid "+t.border}}>
+              <div style={{width:COL_SWATCH,height:10,backgroundColor:t.sop,borderRadius:"50%",flexShrink:0}}/>
+              <span style={{fontSize:12,fontWeight:700,color:t.sop}}>G6 — Start of Production (SOP): {fmtD(sopDate)}</span>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:10,padding:"5px 0",borderBottom:"1px solid "+t.border}}>
+              <div style={{width:COL_SWATCH,height:10,backgroundColor:PROD_PHASES[0].color,borderRadius:2,flexShrink:0}}/>
+              <span style={{fontSize:13,fontWeight:700,color:t.text,width:COL_PHASE,flexShrink:0}}>Ph7 Launch</span>
+              <div style={{display:"flex",alignItems:"center",gap:6,width:COL_DATES,flexShrink:0}}>
+                <DateCell date={sopDate} t={t} isDark={isDark} readOnly/>
+                <span style={{color:t.textMuted,fontSize:13}}>→</span>
+                <DateCell date={launchEndDate} onChange={v=>{const d=frInp(v);setLaunchWk(Math.max(4,Math.round((d-sopDate)/864e5/7)));}} t={t} isDark={isDark}/>
+              </div>
+              <div style={{flexGrow:1}}/>
+              <div style={{width:COL_WK,flexShrink:0}}><EditCell value={launchWeeks} onCommit={v=>setLaunchWk(Math.max(4,Math.round(v)))} width={72} suffix="wk" t={t}/></div>
+              <span style={{fontSize:16,color:t.textDim,fontWeight:200,width:COL_SEP,flexShrink:0,textAlign:"center"}}>/</span>
+              <div style={{width:COL_PCT,flexShrink:0}}><span style={{fontSize:13,color:t.textDim,padding:"5px 0"}}>—</span></div>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:10,padding:"5px 0"}}>
+              <div style={{width:COL_SWATCH,height:10,backgroundColor:PROD_PHASES[1].color,borderRadius:2,flexShrink:0}}/>
+              <span style={{fontSize:13,fontWeight:700,color:t.text,width:COL_PHASE,flexShrink:0}}>Ph8 Sustain</span>
+              <div style={{display:"flex",alignItems:"center",gap:6,width:COL_DATES,flexShrink:0}}>
+                <DateCell date={launchEndDate} onChange={v=>{const d=frInp(v);setLaunchWk(Math.max(4,Math.round((d-sopDate)/864e5/7)));}} t={t} isDark={isDark}/>
+                <span style={{color:t.textMuted,fontSize:13}}>→</span>
+                <DateCell date={sustainEndDate} onChange={v=>{const d=frInp(v);setSustainWk(Math.max(4,Math.round((d-launchEndDate)/864e5/7)));}} t={t} isDark={isDark}/>
+              </div>
+              <div style={{flexGrow:1}}/>
+              <div style={{width:COL_WK,flexShrink:0}}><EditCell value={sustainWeeks} onCommit={v=>setSustainWk(Math.max(4,Math.round(v)))} width={72} suffix="wk" t={t}/></div>
+              <span style={{fontSize:16,color:t.textDim,fontWeight:200,width:COL_SEP,flexShrink:0,textAlign:"center"}}>/</span>
+              <div style={{width:COL_PCT,flexShrink:0}}><span style={{fontSize:13,color:t.textDim,padding:"5px 0"}}>—</span></div>
+            </div>
+          </div>
+
+          <ScenarioTable scenarios={scenarios} loading={false} saveError={saveError} setSaveError={setSaveError}
+            scenarioName={scenarioName} setScenarioName={setScName}
+            onSave={saveScenario} onOverwrite={overwriteScenario}
+            onRestore={restoreScenario} onDelete={deleteScenario} onRename={renameScenario}
+            t={t} isDark={isDark} showSaveForm={true}/>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── ControlsBar ───────────────────────────────────────────────────────────────
+function ControlsBar({t,isDark,box,btn,inpS,mode,switchMode,anchor,anchorLabel,setAnchor,
+  otherDate,otherLabel,handleOtherDate,gran,setGran,actYrBtn,setDurDays,devDays,sopDate,refreshToday}){
+  return(
+    <div style={{...box,padding:"11px 13px",display:"flex",flexWrap:"wrap",gap:"10px 20px",alignItems:"flex-end"}}>
+      <div>
+        <div style={{fontSize:12,color:t.textMuted,marginBottom:4,fontWeight:600}}>Scheduling Mode</div>
+        <div style={{display:"flex",borderRadius:5,overflow:"hidden",border:"1px solid "+t.border}}>
+          {[{m:"forward",lbl:"→ Forward from Start"},{m:"backward",lbl:"Backward from SOP ←"}].map(item=>(
+            <button key={item.m} onClick={()=>switchMode(item.m)}
+              style={{padding:"5px 12px",border:"none",cursor:"pointer",fontSize:13,fontWeight:700,
+                background:mode===item.m?t.btnAct:t.btnBg,color:mode===item.m?"#fff":t.btnText,transition:"background 0.15s"}}>
+              {item.lbl}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <div style={{fontSize:12,marginBottom:4,fontWeight:700,color:"#3a7ad0"}}>
+          📌 {anchorLabel} <span style={{fontWeight:400,color:t.textMuted,fontSize:11}}>(fixed anchor)</span>
+        </div>
+        <input type="date" value={toInp(anchor)} onChange={e=>setAnchor(frInp(e.target.value))} style={inpS(false)}/>
+      </div>
+      <div>
+        <div style={{fontSize:12,color:t.textMuted,marginBottom:4,fontWeight:600}}>Dev Duration</div>
+        <div style={{display:"flex",gap:4}}>
+          {[1,2,3,4,5].map(y=>(
+            <button key={y} onClick={()=>setDurDays(Math.round(365.25*y))} style={btn(actYrBtn===y,true)}>{y}yr</button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <div style={{fontSize:12,marginBottom:4,fontWeight:600,color:t.textMuted}}>
+          📐 {otherLabel} <span style={{fontSize:11}}>(edit to adjust duration)</span>
+        </div>
+        <input type="date" value={toInp(otherDate)} onChange={e=>handleOtherDate(e.target.value)} style={inpS(true)}/>
+      </div>
+      <div>
+        <div style={{fontSize:12,color:t.textMuted,marginBottom:4,fontWeight:600}}>Ruler</div>
+        <div style={{display:"flex",gap:4}}>
+          {["Monthly","Quarterly","Yearly"].map(g=>(
+            <button key={g} onClick={()=>setGran(g.toLowerCase())} style={btn(gran===g.toLowerCase(),true)}>{g}</button>
+          ))}
+        </div>
+      </div>
+      <div style={{display:"flex",alignItems:"flex-end",gap:6}}>
+        <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+          <div style={{fontSize:11,color:t.textMuted,whiteSpace:"nowrap"}}>Today line</div>
+          <button onClick={refreshToday} style={{...btn(false,true),display:"flex",alignItems:"center",gap:5}} title="Refresh Today line">
+            <RefreshIcon sz={13} c={t.btnText}/> Refresh
+          </button>
+        </div>
+      </div>
+      <div style={{marginLeft:"auto",textAlign:"right"}}>
+        <div style={{fontSize:11,color:t.textMuted}}>Development</div>
+        <div style={{fontSize:16,fontWeight:800}}>{fmtW(devDays/7)}</div>
+        <div style={{fontSize:10,color:t.textDim}}>SOP: {fmtD(sopDate)}</div>
+      </div>
+    </div>
+  );
+}
+
+// ── TimelinePanel ─────────────────────────────────────────────────────────────
+function TimelinePanel({t,isDark,box,timelineRef,rowLbl,ticks,dspDevFrac,dspLaunchFrac,
+  todayDispFrac,showToday,showG7,truncated,startDate,displayEndDate,sopDate,launchEndDate,
+  planningEnd,developEnd,n,st,devDays,prodDispItems,dbList,testBars,trVisible,trPos,
+  devPhaseDate,devPhaseStart,devPhaseEnd,dspDevPos,getLabelForBar,
+  startPhaseDrag,startTrDrag,startBuildDrag,startTestDrag,
+  deleteDb,splitDb,deleteTr,deleteTestBar}){
+  return(
+    <div style={{...box,padding:"20px 22px"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14,gap:12,flexWrap:"wrap"}}>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+          <LegendItem shape="diamond" color={GATE_COLOR} label="Gate Review" tc={t.textMuted}/>
+          <LegendItem shape="diamond" color={TR_COLOR}   label="Tech Review"  tc={t.textMuted}/>
+          <LegendItem shape="bar"     color="#b94a08"    label="Robot Build"  tc={t.textMuted}/>
+          <LegendItem shape="bar"     color="#5b6abf"    label="Testing"      tc={t.textMuted}/>
+          {showToday&&<LegendItem shape="bar" color="#e74c3c" label="Today" tc={t.textMuted}/>}
+        </div>
+      </div>
+
+      {/* PNG capture target */}
+      <div ref={timelineRef} style={{position:"relative",width:"100%",background:isDark?t.bg:"#ffffff",padding:"4px 0"}}>
+        {/* Ruler */}
+        <div style={{position:"relative",height:48,marginBottom:6}}>
+          <div style={{position:"absolute",top:0,left:0,fontSize:12,color:t.rulerMajTx,fontWeight:700,whiteSpace:"nowrap"}}>{fmtD(startDate)}</div>
+          <div style={{position:"absolute",top:0,right:0,fontSize:12,color:t.rulerMajTx,fontWeight:700,whiteSpace:"nowrap"}}>
+            {fmtD(displayEndDate)}{truncated&&<span style={{fontSize:10,color:t.sop}}> +</span>}
+          </div>
+          <div style={{position:"absolute",bottom:0,left:0,right:0,height:1,background:t.rulerLine}}/>
+          {ticks.map((tk,i)=>(
+            <div key={i} style={{position:"absolute",left:pc(tk.x),transform:"translateX(-50%)",bottom:0,display:"flex",flexDirection:"column",alignItems:"center"}}>
+              {tk.label&&<span style={{fontSize:10,color:tk.major?t.rulerMajTx:t.rulerMinTx,whiteSpace:"nowrap",marginBottom:2,fontWeight:tk.major?700:400}}>{tk.label}</span>}
+              <div style={{width:1,height:tk.major?12:6,background:tk.major?t.rulerMajTk:t.rulerMinTk}}/>
+            </div>
+          ))}
+          <div style={{position:"absolute",left:pc(dspDevFrac),top:0,bottom:0,display:"flex",flexDirection:"column",alignItems:"center",zIndex:6,transform:"translateX(-1px)"}}>
+            <span style={{fontSize:11,color:t.sop,whiteSpace:"nowrap",fontWeight:800,position:"absolute",top:0,left:"50%",transform:"translateX(-50%)"}}>G6 / SOP</span>
+            <div style={{position:"absolute",bottom:0,width:2,height:16,background:t.sop}}/>
+          </div>
+          {showToday&&(
+            <div style={{position:"absolute",left:pc(todayDispFrac),top:0,bottom:0,display:"flex",flexDirection:"column",alignItems:"center",zIndex:10,transform:"translateX(-1px)"}}>
+              <span style={{fontSize:11,color:"#e74c3c",whiteSpace:"nowrap",fontWeight:800,position:"absolute",top:0,left:"50%",transform:"translateX(-50%)"}}>Today</span>
+              <div style={{position:"absolute",bottom:0,width:2,height:14,background:"#e74c3c"}}/>
+            </div>
+          )}
+        </div>
+
+        {/* Section labels */}
+        <div style={{display:"flex",height:20,marginBottom:2,fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.5px",color:t.textDim}}>
+          <div style={{width:pc(planningEnd),display:"flex",alignItems:"center",justifyContent:"center",borderRight:"1px solid "+t.border,overflow:"hidden",flexShrink:0}}>Planning (Ph0–Ph2)</div>
+          <div style={{width:pc(developEnd-planningEnd),display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",flexShrink:0,borderRight:"2px dashed "+t.sop}}>Development (Ph3–Ph6)</div>
+          <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>Production</div>
+        </div>
+
+        {/* Timeline rows — overflow:hidden contains the gridlines */}
+        <div style={{position:"relative",overflow:"hidden"}}>
+          {ticks.map((tk,i)=>(
+            <div key={"gl-"+i} style={{position:"absolute",left:pc(tk.x),top:0,bottom:0,width:1,background:t.gridLine,pointerEvents:"none",zIndex:1}}/>
+          ))}
+          <div style={{position:"absolute",left:pc(dspDevFrac),top:0,bottom:0,width:0,borderLeft:"2px dashed "+t.sop,zIndex:4,pointerEvents:"none",transform:"translateX(-1px)"}}/>
+          {showToday&&<div style={{position:"absolute",left:pc(todayDispFrac),top:0,bottom:0,width:0,borderLeft:"2px dashed rgba(231,76,60,0.8)",zIndex:46,pointerEvents:"none",transform:"translateX(-1px)"}}/>}
+
+          {/* Phase blocks */}
+          <div style={{display:"flex",height:64,position:"relative",overflow:"visible",borderBottom:"1px solid "+t.gridLine}}>
+            {n.map((p,i)=>{const phase=PHASES[i];if(!phase)return null;
+              return(
+                <PhaseBlock key={i} phase={phase} idx={i} p={p} dspDevFrac={dspDevFrac} t={t}
+                  devPhaseStart={devPhaseStart} devPhaseEnd={devPhaseEnd} devDays={devDays}
+                  onDragStart={i<n.length-1?e=>startPhaseDrag(e,i):null}/>
+              );})}
+            {prodDispItems.map(item=>(
+              <div key={item.ph.id} style={{width:pc(item.w),backgroundColor:item.ph.color,position:"relative",display:"flex",alignItems:"center",justifyContent:"center",borderLeft:"2px solid "+t.bg,overflow:"hidden",flexShrink:0}}>
+                <div style={{textAlign:"center",pointerEvents:"none",padding:"0 4px"}}>
+                  <div style={{fontSize:item.w>0.07?14:12,fontWeight:800,color:t.phTx,whiteSpace:"nowrap"}}>Ph{item.ph.id}</div>
+                  {item.w>0.075&&<div style={{fontSize:11,color:t.phSub,marginTop:1,whiteSpace:"nowrap"}}>{item.ph.name}</div>}
+                  {item.w>0.09&&<div style={{fontSize:10,color:t.phDim,marginTop:1}}>{fmtW(item.wks)}</div>}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Phase Exit Gate Reviews */}
+          <div style={{position:"relative",height:74,marginTop:2,overflow:"visible",borderBottom:"1px solid "+t.gridLine}}>
+            <span style={rowLbl}>Phase Exit Gate Reviews</span>
+            {n.map((_,i)=>{const x=dspDevFrac*(st[i]+n[i]);return<Diamond key={i} x={x} label={"G"+i}
+              sub={i===6?"SOP":i===5?"Model Fix":undefined} color={GATE_COLOR} sz={i===6?15:11}
+              tc={t.milTx} sc={t.milSub} date={devPhaseDate(i,1)} desc={GATE_DESC[i]} t={t}/>;}) }
+            {showG7&&<Diamond x={dspDevFrac+dspLaunchFrac} label="G7" color={GATE_COLOR} sz={11} tc={t.milTx} sc={t.milSub} date={launchEndDate} desc={GATE_DESC[7]} t={t}/>}
+          </div>
+
+          {/* Tech Reviews */}
+          <div style={{position:"relative",height:74,marginTop:2,overflow:"visible",borderBottom:"1px solid "+t.gridLine}}>
+            <span style={rowLbl}>Program Tech Reviews</span>
+            {DEFAULT_TR.map((tr,i)=>{if(!trVisible[i])return null;const x=dspDevPos(tr.phase,trPos[i]);
+              return<Diamond key={tr.id} x={x} label={tr.id} color={TR_COLOR} sz={12}
+                tc={t.milTx} sc={t.milSub} date={devPhaseDate(tr.phase,trPos[i])} desc={tr.desc} t={t}
+                onDragStart={e=>startTrDrag(e,i)} onDelete={()=>deleteTr(i)}/>;}) }
+          </div>
+
+          {/* Robot Builds */}
+          <div style={{position:"relative",height:BUILD_BAR_H+28,marginTop:2,overflow:"visible",borderBottom:"1px solid "+t.gridLine}}>
+            <span style={rowLbl}>Robot Builds</span>
+            {dbList.map(b=>{const x1=dspDevPos(b.phase,b.s),x2=dspDevPos(b.phase,b.e),lbl=getLabelForBar(b,dbList);
+              return<DragBar key={b.key} x1={x1} x2={x2} label={lbl}
+                dateStart={devPhaseDate(b.phase,b.s)} dateEnd={devPhaseDate(b.phase,b.e)} t={t} isDark={isDark}
+                onDragLeft={e=>startBuildDrag(e,b.key,"left",b)}
+                onDragRight={e=>startBuildDrag(e,b.key,"right",b)}
+                onDragBody={e=>startBuildDrag(e,b.key,"body",b)}
+                onDelete={()=>deleteDb(b.key)} onSplit={()=>splitDb(b.key)}/>;}) }
+          </div>
+
+          {/* Testing */}
+          <div style={{position:"relative",height:BUILD_BAR_H+28,marginTop:2,overflow:"visible"}}>
+            <span style={rowLbl}>Testing</span>
+            {(testBars||[]).map(b=>{const x1=dspDevPos(b.phase,b.s),x2=dspDevPos(b.phase,b.e);
+              return<DragBar key={b.key} x1={x1} x2={x2} label={b.id}
+                dateStart={devPhaseDate(b.phase,b.s)} dateEnd={devPhaseDate(b.phase,b.e)}
+                t={t} isDark={isDark} barColor="#5b6abf"
+                onDragLeft={e=>startTestDrag(e,b.key,"left",b)}
+                onDragRight={e=>startTestDrag(e,b.key,"right",b)}
+                onDragBody={e=>startTestDrag(e,b.key,"body",b)}
+                onDelete={()=>deleteTestBar(b.key)}/>;}) }
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Phase block with hover tooltip
+function PhaseBlock({phase,idx,p,dspDevFrac,t,devPhaseStart,devPhaseEnd,devDays,onDragStart}){
+  const[hov,setHov]=useState(false);
+  return(
+    <div style={{width:pc(p*dspDevFrac),backgroundColor:phase.color,position:"relative",display:"flex",alignItems:"center",justifyContent:"center",overflow:"visible",flexShrink:0,zIndex:hov?20:1}}
+      onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}>
+      <div style={{textAlign:"center",pointerEvents:"none",padding:"0 4px",position:"relative",zIndex:2}}>
+        <div style={{fontSize:p>0.07?14:12,fontWeight:800,color:t.phTx,whiteSpace:"nowrap"}}>Ph{idx}</div>
+        {p>0.075&&<div style={{fontSize:11,color:t.phSub,marginTop:1,whiteSpace:"nowrap"}}>{phase.name}</div>}
+        {p>0.09&&<div style={{fontSize:10,color:t.phDim,marginTop:1}}>{fmtW(Math.round(p*devDays/7))}</div>}
+      </div>
+      {hov&&<PhaseTooltip phase={phase} idx={idx} startDate={devPhaseStart(idx)} endDate={devPhaseEnd(idx)} pct={p} devDays={devDays} t={t}/>}
+      {onDragStart&&(
+        <div onMouseDown={onDragStart} title="Drag to resize"
+          style={{position:"absolute",right:-5,top:0,width:10,height:"100%",cursor:"col-resize",zIndex:25,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{width:3,height:"70%",background:t.handle,borderRadius:2}}/>
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<ErrorBoundary><App/></ErrorBoundary>);
+</script>
+</body>
+</html>
