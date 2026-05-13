@@ -165,7 +165,7 @@ function exportCSVFull(snap,mode,gran,startDate,sopDate,launchEndDate,sustainEnd
   const all=[metaRow,...rows];
   const csv=all.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n");
   const blob=new Blob([csv],{type:"text/csv"});const url=URL.createObjectURL(blob);
-  const a=document.createElement("a");a.href=url;a.download="timeline.csv";a.click();URL.revokeObjectURL(url);
+  const a=document.createElement("a");a.href=url;a.download="pdp_timeline.csv";a.click();URL.revokeObjectURL(url);
 }
 
 function importCSV(text,initSnap){
@@ -176,7 +176,7 @@ function importCSV(text,initSnap){
     try{
       const meta=JSON.parse((ff[0]||"").slice(CSV_META.length));
       const s=meta.snap;
-      return{snap:{pcts:Array.isArray(s.pcts)&&s.pcts.length===PHASES.length?s.pcts:[...DEFAULT_PCTS],trPos:s.trPos||DEFAULT_TR.map(r=>r.pos),trVisible:s.trVisible||DEFAULT_TR.map(()=>true),dbList:Array.isArray(s.dbList)?s.dbList:makeDefaultDbList(),testBars:Array.isArray(s.testBars)?s.testBars:null,anchor:frInp(s.anchor),durDays:s.durDays||Math.round(365.25*2),launchWeeks:s.launchWeeks||DEFAULT_LAUNCH_WK,sustainWeeks:s.sustainWeeks||DEFAULT_SUSTAIN_WK},mode:meta.mode,gran:meta.gran};
+      return{snap:{pcts:Array.isArray(s.pcts)&&s.pcts.length===PHASES.length?s.pcts:[...DEFAULT_PCTS],trPos:s.trPos||DEFAULT_TR.map(r=>r.pos),trVisible:s.trVisible||DEFAULT_TR.map(()=>true),dbList:Array.isArray(s.dbList)?s.dbList:makeDefaultDbList(),testBars:Array.isArray(s.testBars)?s.testBars:null,anchor:frInp(s.anchor),durDays:s.durDays||Math.round(365.25*2),launchWeeks:s.launchWeeks||DEFAULT_LAUNCH_WK,sustainWeeks:s.sustainWeeks||DEFAULT_SUSTAIN_WK,completed:s.completed||{}},mode:meta.mode,gran:meta.gran};
     }catch{}
   }
   const header=lines[0].replace(/^\uFEFF/,"");
@@ -221,7 +221,7 @@ function BugModal({t,isDark,onClose}){
   const[text,setText]=useState("");
   function submit(){
     if(!text.trim())return;
-    const subject=encodeURIComponent("Schedule Scenario Bug Report");
+    const subject=encodeURIComponent("Schedule Scenario Tool Bug Report");
     const body=encodeURIComponent(text.trim());
     window.open(`mailto:oliver.majer.lewis+git@gmail.com?subject=${subject}&body=${body}`);
     onClose();
@@ -247,9 +247,9 @@ function BugModal({t,isDark,onClose}){
 }
 
 // Phase hover tooltip
-function PhaseTooltip({phase,idx,startDate,endDate,pct,devDays,t}){
+function PhaseTooltip({phase,idx,startDate,endDate,pct,devDays,t,completed,onToggleComplete}){
   return(
-    <div style={{position:"absolute",top:"110%",left:"50%",transform:"translateX(-50%)",background:t.ttBg,border:"1px solid "+t.ttBorder,borderRadius:7,padding:"10px 13px",zIndex:200,whiteSpace:"nowrap",pointerEvents:"none",boxShadow:"0 6px 20px rgba(0,0,0,0.28)",minWidth:210}}>
+    <div style={{position:"absolute",top:"110%",left:"50%",transform:"translateX(-50%)",background:t.ttBg,border:"1px solid "+t.ttBorder,borderRadius:7,padding:"10px 13px",zIndex:200,whiteSpace:"nowrap",pointerEvents:"all",boxShadow:"0 6px 20px rgba(0,0,0,0.28)",minWidth:210}}>
       <div style={{fontWeight:800,marginBottom:4,fontSize:14,display:"flex",alignItems:"center",gap:7,color:t.text}}>
         <span style={{display:"inline-block",width:10,height:10,backgroundColor:phase.color,borderRadius:2}}/>
         Ph{idx}: {phase.name}
@@ -257,19 +257,20 @@ function PhaseTooltip({phase,idx,startDate,endDate,pct,devDays,t}){
       <div style={{fontSize:12,color:t.textMuted,marginBottom:2}}>{fmtD(startDate)} → {fmtD(endDate)}</div>
       <div style={{fontSize:12,color:t.textMuted,marginBottom:4}}>{fmtW(Math.round(pct*devDays/7))} &nbsp;·&nbsp; {(pct*100).toFixed(1)}% of dev</div>
       <div style={{fontSize:12,color:t.textDim,lineHeight:1.5,maxWidth:220}}>{phase.desc}</div>
+      {onToggleComplete&&<div onMouseDown={e=>{e.stopPropagation();onToggleComplete();}} style={{marginTop:8,paddingTop:6,borderTop:"1px solid "+t.ttBorder,fontSize:11,color:completed?"#27ae60":"#888",cursor:"pointer",textAlign:"center",fontWeight:700}}>{completed?"✓ Mark Incomplete":"○ Mark Complete"}</div>}
     </div>
   );
 }
 
 // Diamond
-function Diamond({x,label,sub,color,sz=12,tc,sc,date,desc,t,onDragStart,onDelete}){
-  const[hov,setHov]=useState(false);const timer=useRef(null);
-  function enter(){clearTimeout(timer.current);setHov(true);}
-  function leave(){timer.current=setTimeout(()=>setHov(false),150);}
-  useEffect(()=>()=>clearTimeout(timer.current),[]);
+function Diamond({x,label,sub,color,sz=12,tc,sc,date,desc,t,onDragStart,onDelete,completed,onToggleComplete}){
+  const[hov,setHov]=useState(false);const timer=useRef(null);const showTimer=useRef(null);
+  function enter(){clearTimeout(timer.current);clearTimeout(showTimer.current);showTimer.current=setTimeout(()=>setHov(true),350);}
+  function leave(){clearTimeout(showTimer.current);timer.current=setTimeout(()=>setHov(false),150);}
+  useEffect(()=>()=>{clearTimeout(timer.current);clearTimeout(showTimer.current);},[]);
   const d=sz*1.6,pts=(d/2)+",1 "+(d-1)+","+(d/2)+" "+(d/2)+","+(d-1)+" 1,"+(d/2);
   return(
-    <div style={{position:"absolute",left:pc(x),transform:"translateX(-50%)",display:"inline-flex",flexDirection:"column",alignItems:"center",top:0,zIndex:hov?60:5,cursor:onDragStart?"ew-resize":"default"}}
+    <div style={{position:"absolute",left:pc(x),transform:"translateX(-50%)",display:"inline-flex",flexDirection:"column",alignItems:"center",top:18,zIndex:hov?60:5,cursor:onDragStart?"ew-resize":"default"}}
       onMouseEnter={enter} onMouseLeave={leave} onMouseDown={onDragStart}>
       {hov&&date&&(
         <div onMouseEnter={enter} onMouseLeave={leave} style={{position:"absolute",bottom:"100%",left:"50%",transform:"translateX(-50%)",paddingBottom:10,zIndex:300,pointerEvents:"all",display:"flex",flexDirection:"column",alignItems:"center"}}>
@@ -279,55 +280,68 @@ function Diamond({x,label,sub,color,sz=12,tc,sc,date,desc,t,onDragStart,onDelete
               {label}{sub&&<span style={{fontWeight:500,color:t.textMuted}}>· {sub}</span>}
             </div>
             {desc&&<div style={{fontSize:12,color:t.textMuted,marginBottom:4}}>{desc}</div>}
-            <div style={{fontSize:13,fontWeight:700,color:t.text,borderTop:"1px solid "+t.border,paddingTop:4,marginTop:2}}>📅 {fmtD(date)}</div>
-            {onDelete&&<div onMouseDown={e=>{e.stopPropagation();onDelete();setHov(false);}} style={{marginTop:6,paddingTop:6,borderTop:"1px solid "+t.ttBorder,fontSize:11,color:"#e05a5a",cursor:"pointer",textAlign:"center",fontWeight:700}}>🗑 Remove milestone</div>}
+            <div style={{fontSize:13,fontWeight:700,color:t.text,borderTop:"1px solid "+t.border,paddingTop:4,marginTop:2,marginBottom:6}}>📅 {fmtD(date)}</div>
+            {(onDelete||onToggleComplete)&&(
+              <div style={{display:"flex",gap:6,borderTop:"1px solid "+t.ttBorder,paddingTop:6,flexWrap:"wrap"}}>
+                {onDelete&&<div onMouseDown={e=>{e.stopPropagation();onDelete();setHov(false);}} style={{fontSize:11,color:"#e05a5a",cursor:"pointer",fontWeight:700,padding:"2px 6px",borderRadius:3,border:"1px solid #e05a5a"}}>🗑 Delete</div>}
+                {onToggleComplete&&<div onMouseDown={e=>{e.stopPropagation();onToggleComplete();}} style={{fontSize:11,color:completed?"#27ae60":"#888",cursor:"pointer",fontWeight:700,padding:"2px 6px",borderRadius:3,border:"1px solid "+(completed?"#27ae60":"#888")}}>{completed?"✓ Completed":"○ Complete"}</div>}
+              </div>
+            )}
           </div>
         </div>
       )}
-      <svg width={d} height={d} viewBox={"0 0 "+d+" "+d} overflow="visible" style={{marginTop:18}}>
+      <svg width={d} height={d} viewBox={"0 0 "+d+" "+d} overflow="visible" style={{marginTop:4}}>
         <polygon points={pts} fill={color} stroke={hov?"rgba(255,255,255,0.6)":"rgba(0,0,0,0.35)"} strokeWidth={hov?2:1}/>
       </svg>
       <div style={{fontSize:10,color:tc,fontWeight:700,whiteSpace:"nowrap",marginTop:3,textAlign:"center",lineHeight:1.3}}>
         {label}{sub&&<div style={{fontSize:9,color:sc,fontWeight:400}}>{sub}</div>}
       </div>
+      {completed&&<div style={{position:"absolute",top:0,right:-8,zIndex:60,width:14,height:14,borderRadius:"50%",background:"#27ae60",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 1px 4px rgba(0,0,0,0.3)"}}>
+        <svg width={9} height={9} viewBox="0 0 9 9"><polyline points="1.5,4.5 3.5,6.5 7.5,2" stroke="#fff" strokeWidth={1.8} fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+      </div>}
     </div>
   );
 }
 
 // Generic draggable bar (used for builds and testing)
-function DragBar({x1,x2,label,dateStart,dateEnd,t,onDragLeft,onDragRight,onDragBody,onDelete,onSplit,barColor,isDark}){
-  const[hov,setHov]=useState(false);const timer=useRef(null);
-  function enter(){clearTimeout(timer.current);setHov(true);}
-  function leave(){timer.current=setTimeout(()=>setHov(false),150);}
-  useEffect(()=>()=>clearTimeout(timer.current),[]);
+function DragBar({x1,x2,label,dateStart,dateEnd,t,onDragLeft,onDragRight,onDragBody,onDelete,onSplit,barColor,isDark,completed,onToggleComplete}){
+  const[hov,setHov]=useState(false);const timer=useRef(null);const showTimer=useRef(null);
+  function enter(){clearTimeout(timer.current);clearTimeout(showTimer.current);showTimer.current=setTimeout(()=>setHov(true),350);}
+  function leave(){clearTimeout(showTimer.current);timer.current=setTimeout(()=>setHov(false),150);}
+  useEffect(()=>()=>{clearTimeout(timer.current);clearTimeout(showTimer.current);},[]);
   if(x2<=x1)return null;
-  const HW=14;
   const bg=barColor||"#b94a08";
   const bgHov=barColor?barColor+"cc":"#d4550a";
-  const handleCol=isDark?"rgba(255,255,255,0.12)":"rgba(0,0,0,0.14)";
+  const barTop=Math.round((BUILD_BAR_H+28-BUILD_BAR_H)/2);
   return(
-    <div style={{position:"absolute",left:pc(x1),width:pc(x2-x1),top:0,zIndex:hov?50:5,height:BUILD_BAR_H+20}} onMouseEnter={enter} onMouseLeave={leave}>
+    <div style={{position:"absolute",left:pc(x1),width:pc(x2-x1),top:barTop,zIndex:hov?50:5,height:BUILD_BAR_H+20}} onMouseEnter={enter} onMouseLeave={leave}>
       {hov&&(
         <div onMouseEnter={enter} onMouseLeave={leave} style={{position:"absolute",bottom:"100%",left:"50%",transform:"translateX(-50%)",paddingBottom:10,zIndex:300,pointerEvents:"all"}}>
           <div style={{background:t.ttBg,border:"1px solid "+t.ttBorder,borderRadius:6,padding:"7px 11px",whiteSpace:"nowrap",boxShadow:"0 4px 16px rgba(0,0,0,0.28)"}}>
             <div style={{fontSize:13,fontWeight:800,color:t.text,marginBottom:4,display:"flex",alignItems:"center",gap:6}}><div style={{width:10,height:10,backgroundColor:bg,borderRadius:2}}/>{label}</div>
             <div style={{fontSize:12,color:t.textMuted,marginBottom:1}}>Start: <span style={{color:t.text,fontWeight:600}}>{fmtD(dateStart)}</span></div>
             <div style={{fontSize:12,color:t.textMuted,marginBottom:6}}>End: <span style={{color:t.text,fontWeight:600}}>{fmtD(dateEnd)}</span></div>
-            <div style={{display:"flex",gap:6,borderTop:"1px solid "+t.ttBorder,paddingTop:6}}>
+            <div style={{display:"flex",gap:6,borderTop:"1px solid "+t.ttBorder,paddingTop:6,flexWrap:"wrap"}}>
               {onSplit&&<div onMouseDown={e=>{e.stopPropagation();onSplit();setHov(false);}} style={{fontSize:11,color:"#3a9ad0",cursor:"pointer",fontWeight:700,padding:"2px 6px",borderRadius:3,border:"1px solid #3a9ad0"}}>✂ Split</div>}
               {onDelete&&<div onMouseDown={e=>{e.stopPropagation();onDelete();}} style={{fontSize:11,color:"#e05a5a",cursor:"pointer",fontWeight:700,padding:"2px 6px",borderRadius:3,border:"1px solid #e05a5a"}}>🗑 Delete</div>}
+              {onToggleComplete&&<div onMouseDown={e=>{e.stopPropagation();onToggleComplete();}} style={{fontSize:11,color:completed?"#27ae60":"#888",cursor:"pointer",fontWeight:700,padding:"2px 6px",borderRadius:3,border:"1px solid "+(completed?"#27ae60":"#888")}}>{completed?"✓ Completed":"○ Complete"}</div>}
             </div>
           </div>
         </div>
       )}
-      <div onMouseDown={onDragLeft} style={{position:"absolute",left:0,top:0,width:HW,height:BUILD_BAR_H,cursor:"ew-resize",zIndex:10,display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{width:2,height:BUILD_BAR_H*0.5,background:handleCol,borderRadius:2}}/></div>
-      <div onMouseDown={onDragBody} style={{position:"absolute",left:HW,right:HW,top:0,height:BUILD_BAR_H,backgroundColor:hov?bgHov:bg,borderRadius:4,display:"flex",alignItems:"center",justifyContent:"center",cursor:"grab",boxShadow:"inset 0 2px 0 rgba(255,255,255,0.14)",transition:"background 0.15s"}}><span style={{fontSize:12,color:"#fff",fontWeight:700,whiteSpace:"nowrap",pointerEvents:"none"}}>{label}</span></div>
-      <div onMouseDown={onDragRight} style={{position:"absolute",right:0,top:0,width:HW,height:BUILD_BAR_H,cursor:"ew-resize",zIndex:10,display:"flex",alignItems:"center",justifyContent:"center"}}><div style={{width:2,height:BUILD_BAR_H*0.5,background:handleCol,borderRadius:2}}/></div>
+      <div onMouseDown={onDragBody} style={{position:"absolute",left:0,right:0,top:0,height:BUILD_BAR_H,backgroundColor:hov?bgHov:bg,borderRadius:4,display:"flex",alignItems:"center",justifyContent:"center",cursor:"grab",boxShadow:"inset 0 2px 0 rgba(255,255,255,0.14)",transition:"background 0.15s",zIndex:5}}>
+        <span style={{fontSize:12,color:"#fff",fontWeight:700,whiteSpace:"nowrap",pointerEvents:"none"}}>{label}</span>
+        {completed&&<div style={{position:"absolute",top:-6,right:-6,zIndex:60,width:14,height:14,borderRadius:"50%",background:"#27ae60",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 1px 4px rgba(0,0,0,0.3)"}}>
+          <svg width={9} height={9} viewBox="0 0 9 9"><polyline points="1.5,4.5 3.5,6.5 7.5,2" stroke="#fff" strokeWidth={1.8} fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+        </div>}
+        {onDragLeft&&<div onMouseDown={e=>{e.stopPropagation();onDragLeft(e);}} style={{position:"absolute",left:0,top:0,bottom:0,width:10,cursor:"ew-resize",zIndex:20,borderRadius:"4px 0 0 4px"}}/>}
+        {onDragRight&&<div onMouseDown={e=>{e.stopPropagation();onDragRight(e);}} style={{position:"absolute",right:0,top:0,bottom:0,width:10,cursor:"ew-resize",zIndex:20,borderRadius:"0 4px 4px 0"}}/>}
+      </div>
     </div>
   );
 }
 
-function LegendItem({shape,color,label,tc}){return<div style={{display:"flex",alignItems:"center",gap:4}}>{shape==="diamond"?<svg width={11} height={11} viewBox="0 0 11 11"><polygon points="5.5,0.5 10.5,5.5 5.5,10.5 0.5,5.5" fill={color}/></svg>:<div style={{width:18,height:9,backgroundColor:color,borderRadius:2}}/>}<span style={{fontSize:11,color:tc,whiteSpace:"nowrap"}}>{label}</span></div>;}
+function LegendItem({shape,color,label,tc,onClick,hidden}){return<div onClick={onClick} style={{display:"flex",alignItems:"center",gap:4,cursor:onClick?"pointer":"default",opacity:hidden?0.35:1,transition:"opacity 0.15s",userSelect:"none"}}>{shape==="diamond"?<svg width={11} height={11} viewBox="0 0 11 11"><polygon points="5.5,0.5 10.5,5.5 5.5,10.5 0.5,5.5" fill={color}/></svg>:<div style={{width:18,height:9,backgroundColor:color,borderRadius:2}}/>}<span style={{fontSize:11,color:tc,whiteSpace:"nowrap",textDecoration:hidden?"line-through":"none"}}>{label}</span></div>;}
 
 function EditCell({value,onCommit,width=90,suffix,t}){
   const[local,setLocal]=useState(String(value));
@@ -461,12 +475,15 @@ function App(){
     testBars:initTestBars,
     anchor:defaultStartDate,durDays:defaultDurDays,
     launchWeeks:DEFAULT_LAUNCH_WK,sustainWeeks:DEFAULT_SUSTAIN_WK,
+    completed:{},
   }),[]);
 
   const{current:snap,push:pushSnap,undo,redo,canUndo,canRedo}=useUndoable(initSnap);
   const[isDark,setDark]=useState(false);
+
   const[mode,setMode]=useState(null);
-  const[gran,setGran]=useState("quarterly");
+  const modeRef=useRef(null);useEffect(()=>{modeRef.current=mode;},[mode]);
+  const[gran,setGran]=useState("monthly");
   const[confirmReset,setConfirmReset]=useState(false);
   const[scenarios,setScenarios]=useState([]);
   const[scenarioName,setScName]=useState("");
@@ -475,6 +492,8 @@ function App(){
   const[importSuccess,setImportSuccess]=useState("");
   const[showBug,setShowBug]=useState(false);
   const[todayDate,setTodayDate]=useState(today0);
+  const[hiddenRows,setHiddenRows]=useState({gates:false,reviews:false,builds:false,testing:false});
+  const[showTodayLine,setShowTodayLine]=useState(true);
   const importInputRef=useRef(null);
   const timelineRef=useRef(null);
   const drag=useRef(null),dragSnap=useRef(null),liveSnap=useRef(null);
@@ -482,8 +501,10 @@ function App(){
 
   // Use the live drag position for rendering, but only commit to undo history on mouseup.
   const renderSnap=drag.current&&liveSnap.current?liveSnap.current:snap;
-  const{pcts,trPos,trVisible,dbList,testBars,anchor,durDays,launchWeeks,sustainWeeks}=renderSnap;
+  const{pcts,trPos,trVisible,dbList,testBars,anchor,durDays,launchWeeks,sustainWeeks,completed}=renderSnap;
   function ap(p){pushSnap({...snap,...p});}
+  function toggleComplete(key){const c=snap.completed||{};ap({completed:{...c,[key]:!c[key]}});}
+  function toggleRow(key){setHiddenRows(h=>({...h,[key]:!h[key]}));}
   function setPcts(v){ap({pcts:typeof v==="function"?v(pcts):v});}
   function setTrPos(v){ap({trPos:typeof v==="function"?v(trPos):v});}
   function setTrVisible(v){ap({trVisible:typeof v==="function"?v(trVisible):v});}
@@ -520,7 +541,8 @@ function App(){
   function devPhaseStart(idx){return addD(startDate,Math.round(devDays*st[idx]));}
   function devPhaseEnd(idx){return addD(startDate,Math.round(devDays*(st[idx]+n[idx])));}
 
-  const todayDispFrac=mode!=null?(todayDate-startDate)/dspTotalDays:-1;
+  const todayDispFrac=mode!=null&&startDate instanceof Date&&!isNaN(startDate)
+    ?(todayDate.getTime()-startDate.getTime())/(864e5*dspTotalDays):-1;
   const showToday=mode!=null&&todayDispFrac>=0&&todayDispFrac<=1;
   const showG7=launchEndDate<=displayEndDate;
 
@@ -545,7 +567,7 @@ function App(){
   }
   function setPhaseStartDate(idx,v){
     const nd=frInp(v);
-    if(idx===0){const d=Math.max(7,Math.round((sopDate-nd)/864e5));setDurDays(d);if(mode==="forward")setAnchor(nd);}
+    if(idx===0){const d=Math.max(7,Math.round((sopDate-nd)/864e5));setDurDays(d);if(mode==="forward"||mode==="both")setAnchor(nd);}
     else{const ps=devPhaseStart(idx-1);setPhaseWeeks(idx-1,Math.max(1,Math.round((nd-ps)/864e5))/7);}
   }
   function setPhaseEndDate(idx,v){
@@ -602,6 +624,7 @@ function App(){
       durDays:sc.durDays,
       launchWeeks:sc.launchWeeks||DEFAULT_LAUNCH_WK,
       sustainWeeks:sc.sustainWeeks||DEFAULT_SUSTAIN_WK,
+      completed:sc.completed||{},
     });
     if(sc.mode)setMode(sc.mode);
     if(sc.gran)setGran(sc.gran);
@@ -637,7 +660,7 @@ function App(){
     try{
       const canvas=await html2canvas(timelineRef.current,{backgroundColor:isDark?"#0b1220":"#ffffff",scale:2,useCORS:true,logging:false});
       const url=canvas.toDataURL("image/png");
-      const a=document.createElement("a");a.href=url;a.download="timeline.png";a.click();
+      const a=document.createElement("a");a.href=url;a.download="pdp_timeline.png";a.click();
     }catch(err){alert("PNG export failed: "+err.message);}
   }
 
@@ -649,7 +672,7 @@ function App(){
       const dx=(e.clientX-d.x0)/rect.width;
       const base=dragSnap.current,bn=normP(base.pcts);
       let next=null;
-      if(d.type==="phase"){const sum=base.pcts.reduce((a,b)=>a+b,0);const delta=dx/dspDevFrac*sum,min=sum*0.02;const nA=d.p0[d.idx]+delta,nB=d.p0[d.idx+1]-delta;if(nA>=min&&nB>=min){const np=[...d.p0];np[d.idx]=nA;np[d.idx+1]=nB;next={...base,pcts:np};}}
+      if(d.type==="phase"){const sum=base.pcts.reduce((a,b)=>a+b,0);if(modeRef.current==="both"){const delta=dx/dspDevFrac*sum,min=sum*0.02;const nA=d.p0[d.idx]+delta,nB=d.p0[d.idx+1]-delta;if(nA>=min&&nB>=min){const np=[...d.p0];np[d.idx]=nA;np[d.idx+1]=nB;next={...base,pcts:np};}}else{const deltaDays=(dx/dspDevFrac)*base.durDays;const newDurDays=base.durDays+deltaDays;const minDays=base.durDays*0.02;if(newDurDays>minDays){const np=d.p0.map((p,i)=>i===d.idx?(p/sum*base.durDays+deltaDays)*sum/newDurDays:p*base.durDays/newDurDays);if(np.every(v=>v>0)){next={...base,pcts:np,durDays:newDurDays};}}}}
       else if(d.type==="tr"){const phW=dspDevFrac*bn[d.phase];const np=[...base.trPos];np[d.trIdx]=clamp(d.pos0+dx/phW,0.02,0.98);next={...base,trPos:np};}
       else if(d.type==="build-left"){const phW=dspDevFrac*bn[d.phase];next={...base,dbList:base.dbList.map(b=>b.key===d.bKey?{...b,s:clamp(d.s0+dx/phW,0.01,d.e0-0.05)}:b)};}
       else if(d.type==="build-right"){const phW=dspDevFrac*bn[d.phase];next={...base,dbList:base.dbList.map(b=>b.key===d.bKey?{...b,e:clamp(d.e0+dx/phW,d.s0+0.05,0.99)}:b)};}
@@ -675,11 +698,17 @@ function App(){
     window.addEventListener("keydown",onKey);return()=>window.removeEventListener("keydown",onKey);
   },[undo,redo]);
 
-  function switchMode(m){if(m===mode)return;setAnchor(m==="forward"?startDate:sopDate);setMode(m);}
-  function handleOtherDate(v){const d=frInp(v),nd=mode==="forward"?dBetw(anchor,d):dBetw(d,anchor);if(nd>=7)setDurDays(nd);}
-  const otherDate=mode==="forward"?sopDate:startDate;
-  const anchorLabel=mode==="forward"?"Start Date":"SOP Date (G6)";
-  const otherLabel=mode==="forward"?"SOP Date (G6)":"Calculated Start";
+  function toggleFixed(which){
+    if(which==="start"){
+      if(mode==="both"){setAnchor(addD(anchor,devDays));setMode("backward");}
+      else if(mode==="backward"){setAnchor(startDate);setMode("both");}
+    } else {
+      if(mode==="both")setMode("forward");
+      else if(mode==="forward")setMode("both");
+    }
+  }
+  function handleStartDate(v){const nd=frInp(v);if(mode==="both"){const dur=Math.max(7,dBetw(nd,sopDate));setAnchor(nd);setDurDays(dur);}else if(mode==="forward")setAnchor(nd);else{const dur=dBetw(nd,anchor);if(dur>=7)setDurDays(dur);}}
+  function handleSopDate(v){const nd=frInp(v);if(mode==="backward")setAnchor(nd);else{const dur=dBetw(anchor,nd);if(dur>=7)setDurDays(dur);}}
 
   function btn(act,sm){return{padding:sm?"4px 12px":"5px 14px",borderRadius:4,border:"none",cursor:"pointer",fontWeight:700,fontSize:sm?13:14,background:act?t.btnAct:t.btnBg,color:act?"#fff":t.btnText,transition:"background 0.15s"};}
   function inpS(dashed){return{background:t.inBg,border:"1px "+(dashed?"dashed":"solid")+" "+t.inBorder,color:dashed?(isDark?"#7098ba":"#4a70a0"):t.inText,padding:"5px 9px",borderRadius:4,fontSize:13,outline:"none",colorScheme:isDark?"dark":"light",textAlign:"left"};}
@@ -696,7 +725,7 @@ function App(){
         {mode!=null&&<button onClick={()=>setMode(null)} title="Home" style={{padding:"6px 8px",borderRadius:6,border:"1px solid "+t.border,cursor:"pointer",background:t.btnBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><HouseIcon sz={17} c={t.btnText}/></button>}
         <div>
           <div style={{fontSize:18,fontWeight:800,letterSpacing:0.3}}>Schedule Scenario Tool</div>
-          <div style={{fontSize:13,color:t.textMuted,marginTop:3}}>Created by Oliver Lewis + Claude (Okay, mostly Claude)</div>
+          <div style={{fontSize:13,color:t.textMuted,marginTop:3,display:"flex",alignItems:"center",gap:5}}>Created by Oliver Lewis + <svg width={14} height={14} viewBox="0 0 248 248" fill="none" style={{display:"inline-block",flexShrink:0}}><path d="M52.4285 162.873L98.7844 136.879L99.5485 134.602L98.7844 133.334H96.4921L88.7237 132.862L62.2346 132.153L39.3113 131.207L17.0249 130.026L11.4214 128.844L6.2 121.873L6.7094 118.447L11.4214 115.257L18.171 115.847L33.0711 116.911L55.485 118.447L71.6586 119.392L95.728 121.873H99.5485L100.058 120.337L98.7844 119.392L97.7656 118.447L74.5877 102.732L49.4995 86.1905L36.3823 76.62L29.3779 71.7757L25.8121 67.2858L24.2839 57.3608L30.6515 50.2716L39.3113 50.8623L41.4763 51.4531L50.2636 58.1879L68.9842 72.7209L93.4357 90.6804L97.0015 93.6343L98.4374 92.6652L98.6571 91.9801L97.0015 89.2625L83.757 65.2772L69.621 40.8192L63.2534 30.6579L61.5978 24.632C60.9565 22.1032 60.579 20.0111 60.579 17.4246L67.8381 7.49965L71.9133 6.19995L81.7193 7.49965L85.7946 11.0443L91.9074 24.9865L101.714 46.8451L116.996 76.62L121.453 85.4816L123.873 93.6343L124.764 96.1155H126.292V94.6976L127.566 77.9197L129.858 57.3608L132.15 30.8942L132.915 23.4505L136.608 14.4708L143.994 9.62643L149.725 12.344L154.437 19.0788L153.8 23.4505L150.998 41.6463L145.522 70.1215L141.957 89.2625H143.994L146.414 86.7813L156.093 74.0206L172.266 53.698L179.398 45.6635L187.803 36.802L193.152 32.5484H203.34L210.726 43.6549L207.415 55.1159L196.972 68.3492L188.312 79.5739L175.896 96.2095L168.191 109.585L168.882 110.689L170.738 110.53L198.755 104.504L213.91 101.787L231.994 98.7149L240.144 102.496L241.036 106.395L237.852 114.311L218.495 119.037L195.826 123.645L162.07 131.592L161.696 131.893L162.137 132.547L177.36 133.925L183.855 134.279H199.774L229.447 136.524L237.215 141.605L241.8 147.867L241.036 152.711L229.065 158.737L213.019 154.956L175.45 145.977L162.587 142.787H160.805V143.85L171.502 154.366L191.242 172.089L215.82 195.011L217.094 200.682L213.91 205.172L210.599 204.699L188.949 188.394L180.544 181.069L161.696 165.118H160.422V166.772L164.752 173.152L187.803 207.771L188.949 218.405L187.294 221.832L181.308 223.959L174.813 222.777L161.187 203.754L147.305 182.486L136.098 163.345L134.745 164.2L128.075 235.42L125.019 239.082L117.887 241.8L111.902 237.31L108.718 229.984L111.902 215.452L115.722 196.547L118.779 181.541L121.58 162.873L123.291 156.636L123.14 156.219L121.773 156.449L107.699 175.752L86.304 204.699L69.3663 222.777L65.291 224.431L58.2867 220.768L58.9235 214.27L62.8713 208.48L86.304 178.705L100.44 160.155L109.551 149.507L109.462 147.967L108.959 147.924L46.6977 188.512L35.6182 189.93L30.7788 185.44L31.4156 178.115L33.7079 175.752L52.4285 162.873Z" fill="#D97757"/></svg></div>
         </div>
       </div>
       <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
@@ -709,10 +738,11 @@ function App(){
             <button onClick={doReset} style={{padding:"3px 10px",borderRadius:4,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:t.dangerText,color:"#fff"}}>Yes</button>
             <button onClick={()=>setConfirmReset(false)} style={{padding:"3px 10px",borderRadius:4,border:"1px solid "+t.border,cursor:"pointer",fontSize:12,fontWeight:600,background:t.btnBg,color:t.btnText}}>No</button>
           </div>):<button onClick={()=>setConfirmReset(true)} style={btn(false,true)}>Reset</button>}
+          <button onClick={()=>setShowBug(true)} style={{...btn(false,true),display:"flex",alignItems:"center",gap:5}} title="Report a bug"><BugIcon sz={13} c={t.btnText}/> Report Bug</button>
+          <div style={{width:1,height:22,background:t.border,margin:"0 2px"}}/>
           <button onClick={handleExportCSV} style={{...btn(false,true),background:isDark?"#0e2a1a":"#e8f5ee",color:isDark?"#4caf80":"#1a7a40",border:"1px solid "+(isDark?"#1a4a2a":"#a8d5b8")}}>⬇ CSV</button>
           <button onClick={handleExportPNG} style={{...btn(false,true),display:"flex",alignItems:"center",gap:5,background:isDark?"#0e1a2c":"#e8eef8",color:isDark?"#6a9ad4":"#2a5090",border:"1px solid "+(isDark?"#1b2e45":"#b0c8e8")}}><CameraIcon sz={13} c={isDark?"#6a9ad4":"#2a5090"}/> PNG</button>
         </>}
-        <button onClick={()=>setShowBug(true)} style={{...btn(false,true),display:"flex",alignItems:"center",gap:5}} title="Report a bug"><BugIcon sz={13} c={t.btnText}/> Bug</button>
         <div style={{display:"flex",borderRadius:5,overflow:"hidden",border:"1px solid "+t.border}}>
           {[{v:false,icon:<SunIcon/>,lbl:"Light"},{v:true,icon:<MoonIcon/>,lbl:"Dark"}].map(item=>(
             <button key={item.lbl} onClick={()=>setDark(item.v)} style={{padding:"5px 11px",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:5,fontSize:13,fontWeight:600,background:isDark===item.v?t.btnAct:t.btnBg,color:isDark===item.v?"#fff":t.btnText,transition:"background 0.15s"}}>{item.icon}{item.lbl}</button>
@@ -735,7 +765,7 @@ function App(){
             <div style={{fontSize:14,color:t.textMuted}}>Choose a direction, import a CSV, or load a saved scenario below.</div>
           </div>
           <div style={{display:"flex",gap:14,flexWrap:"wrap",justifyContent:"center"}}>
-            {[{m:"forward",arrow:"→",title:"Work Forward",sub:"Set a start date,\nplan toward SOP",a:defaultStartDate},{m:"backward",arrow:"←",title:"Work Backward",sub:"Set a target SOP date,\ndetermine when to start",a:defaultSop}].map(item=>(
+            {[{m:"forward",arrow:"⚓",title:"Fixed Start",sub:"Pin a start date,\nSOP floats with duration",a:defaultStartDate},{m:"backward",arrow:"⚓",title:"Fixed SOP",sub:"Pin a target SOP date,\nstart date floats with duration",a:defaultSop}].map(item=>(
               <button key={item.m} onClick={()=>{setMode(item.m);setAnchor(item.a);}}
                 style={{background:t.cardBg,border:"2px solid "+t.cardBorder,borderRadius:10,padding:"22px 30px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:10,minWidth:190,transition:"border-color 0.15s,background 0.15s"}}
                 onMouseEnter={e=>{e.currentTarget.style.borderColor="#1e60a5";e.currentTarget.style.background=t.cardHov;}}
@@ -769,13 +799,12 @@ function App(){
         <div>
           <ControlsBar
             t={t} isDark={isDark} box={box} btn={btn} inpS={inpS}
-            mode={mode} switchMode={switchMode}
-            anchor={anchor} anchorLabel={anchorLabel} setAnchor={setAnchor}
-            otherDate={otherDate} otherLabel={otherLabel} handleOtherDate={handleOtherDate}
+            mode={mode} toggleFixed={toggleFixed}
+            startDate={startDate} handleStartDate={handleStartDate}
+            sopDate={sopDate} handleSopDate={handleSopDate}
             gran={gran} setGran={setGran}
             actYrBtn={actYrBtn} setDurDays={setDurDays}
-            devDays={devDays} sopDate={sopDate}
-            refreshToday={refreshToday}
+            devDays={devDays}
           />
 
           <TimelinePanel
@@ -791,6 +820,9 @@ function App(){
             startPhaseDrag={startPhaseDrag} startTrDrag={startTrDrag}
             startBuildDrag={startBuildDrag} startTestDrag={startTestDrag}
             deleteDb={deleteDb} splitDb={splitDb} deleteTr={deleteTr} deleteTestBar={deleteTestBar}
+            completed={completed||{}} toggleComplete={toggleComplete}
+            hiddenRows={hiddenRows} toggleRow={toggleRow}
+            showTodayLine={showTodayLine} toggleTodayLine={()=>setShowTodayLine(v=>!v)}
           />
 
           {/* Phase Schedule */}
@@ -866,30 +898,35 @@ function App(){
 }
 
 // ── ControlsBar ───────────────────────────────────────────────────────────────
-function ControlsBar({t,isDark,box,btn,inpS,mode,switchMode,anchor,anchorLabel,setAnchor,
-  otherDate,otherLabel,handleOtherDate,gran,setGran,actYrBtn,setDurDays,devDays,sopDate,refreshToday}){
+function ControlsBar({t,isDark,box,btn,inpS,mode,toggleFixed,startDate,handleStartDate,
+  sopDate,handleSopDate,gran,setGran,actYrBtn,setDurDays,devDays}){
+  const fixStart=mode==="forward"||mode==="both";
+  const fixSOP=mode==="backward"||mode==="both";
   return(
-    <div style={{...box,padding:"11px 13px",display:"flex",flexWrap:"wrap",gap:"10px 20px",alignItems:"flex-end"}}>
+    <div style={{...box,padding:"16px 20px"}}>
+      <div style={{fontSize:13,color:t.textMuted,fontWeight:700,marginBottom:10,textTransform:"uppercase",letterSpacing:0.4}}>Setup</div>
+    <div style={{display:"flex",flexWrap:"wrap",gap:"10px 20px",alignItems:"flex-end"}}>
       <div>
-        <div style={{fontSize:12,color:t.textMuted,marginBottom:4,fontWeight:600}}>Scheduling Mode</div>
-        <div style={{display:"flex",borderRadius:5,overflow:"hidden",border:"1px solid "+t.border}}>
-          {[{m:"forward",lbl:"→ Forward from Start"},{m:"backward",lbl:"Backward from SOP ←"}].map(item=>(
-            <button key={item.m} onClick={()=>switchMode(item.m)}
-              style={{padding:"5px 12px",border:"none",cursor:"pointer",fontSize:13,fontWeight:700,
-                background:mode===item.m?t.btnAct:t.btnBg,color:mode===item.m?"#fff":t.btnText,transition:"background 0.15s"}}>
+        <div style={{fontSize:12,color:t.textMuted,marginBottom:4,fontWeight:600}}>Scheduling Mode <span style={{fontWeight:400}}>(Select One or Both)</span></div>
+        <div style={{display:"flex",gap:6}}>
+          {[{which:"start",lbl:fixStart?"Fixed Start":"Floating Start",active:fixStart},{which:"sop",lbl:fixSOP?"Fixed SOP":"Floating SOP",active:fixSOP}].map(item=>(
+            <button key={item.which} onClick={()=>toggleFixed(item.which)}
+              style={{padding:"5px 12px",borderRadius:5,border:"1px solid "+(item.active?t.btnAct:t.border),cursor:"pointer",fontSize:13,fontWeight:700,
+                background:item.active?t.btnAct:t.btnBg,color:item.active?"#fff":t.btnText,transition:"all 0.15s",
+                minWidth:116,textAlign:"center"}}>
               {item.lbl}
             </button>
           ))}
         </div>
       </div>
       <div>
-        <div style={{fontSize:12,marginBottom:4,fontWeight:700,color:"#3a7ad0"}}>
-          📌 {anchorLabel} <span style={{fontWeight:400,color:t.textMuted,fontSize:11}}>(fixed anchor)</span>
+        <div style={{fontSize:12,marginBottom:4,fontWeight:600,color:fixStart?"#3a7ad0":t.textMuted}}>
+          Start Date <span style={{visibility:fixStart?"visible":"hidden"}}>⚓</span>
         </div>
-        <input type="date" value={toInp(anchor)} onChange={e=>setAnchor(frInp(e.target.value))} style={inpS(false)}/>
+        <input type="date" value={toInp(startDate)} onChange={e=>handleStartDate(e.target.value)} style={inpS(!fixStart)}/>
       </div>
       <div>
-        <div style={{fontSize:12,color:t.textMuted,marginBottom:4,fontWeight:600}}>Dev Duration</div>
+        <div style={{fontSize:12,color:t.textMuted,marginBottom:4,fontWeight:600}}>Template Durations</div>
         <div style={{display:"flex",gap:4}}>
           {[1,2,3,4,5].map(y=>(
             <button key={y} onClick={()=>setDurDays(Math.round(365.25*y))} style={btn(actYrBtn===y,true)}>{y}yr</button>
@@ -897,25 +934,17 @@ function ControlsBar({t,isDark,box,btn,inpS,mode,switchMode,anchor,anchorLabel,s
         </div>
       </div>
       <div>
-        <div style={{fontSize:12,marginBottom:4,fontWeight:600,color:t.textMuted}}>
-          📐 {otherLabel} <span style={{fontSize:11}}>(edit to adjust duration)</span>
+        <div style={{fontSize:12,marginBottom:4,fontWeight:600,color:fixSOP?"#3a7ad0":t.textMuted}}>
+          SOP Date (G6) <span style={{visibility:fixSOP?"visible":"hidden"}}>⚓</span>
         </div>
-        <input type="date" value={toInp(otherDate)} onChange={e=>handleOtherDate(e.target.value)} style={inpS(true)}/>
+        <input type="date" value={toInp(sopDate)} onChange={e=>handleSopDate(e.target.value)} style={inpS(!fixSOP)}/>
       </div>
       <div>
-        <div style={{fontSize:12,color:t.textMuted,marginBottom:4,fontWeight:600}}>Ruler</div>
+        <div style={{fontSize:12,color:t.textMuted,marginBottom:4,fontWeight:600}}>Timeline Scale</div>
         <div style={{display:"flex",gap:4}}>
           {["Monthly","Quarterly","Yearly"].map(g=>(
             <button key={g} onClick={()=>setGran(g.toLowerCase())} style={btn(gran===g.toLowerCase(),true)}>{g}</button>
           ))}
-        </div>
-      </div>
-      <div style={{display:"flex",alignItems:"flex-end",gap:6}}>
-        <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
-          <div style={{fontSize:11,color:t.textMuted,whiteSpace:"nowrap"}}>Today line</div>
-          <button onClick={refreshToday} style={{...btn(false,true),display:"flex",alignItems:"center",gap:5}} title="Refresh Today line">
-            <RefreshIcon sz={13} c={t.btnText}/> Refresh
-          </button>
         </div>
       </div>
       <div style={{marginLeft:"auto",textAlign:"right"}}>
@@ -923,6 +952,7 @@ function ControlsBar({t,isDark,box,btn,inpS,mode,switchMode,anchor,anchorLabel,s
         <div style={{fontSize:16,fontWeight:800}}>{fmtW(devDays/7)}</div>
         <div style={{fontSize:10,color:t.textDim}}>SOP: {fmtD(sopDate)}</div>
       </div>
+    </div>
     </div>
   );
 }
@@ -933,68 +963,86 @@ function TimelinePanel({t,isDark,box,timelineRef,rowLbl,ticks,dspDevFrac,dspLaun
   planningEnd,developEnd,n,st,devDays,prodDispItems,dbList,testBars,trVisible,trPos,
   devPhaseDate,devPhaseStart,devPhaseEnd,dspDevPos,getLabelForBar,
   startPhaseDrag,startTrDrag,startBuildDrag,startTestDrag,
-  deleteDb,splitDb,deleteTr,deleteTestBar}){
+  deleteDb,splitDb,deleteTr,deleteTestBar,completed,toggleComplete,hiddenRows,toggleRow,showTodayLine,toggleTodayLine}){
+  const legendBg=isDark?"rgba(255,255,255,0.03)":"#f0f2f5";
   return(
     <div style={{...box,padding:"20px 22px"}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:14,gap:12,flexWrap:"wrap"}}>
-        <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
-          <LegendItem shape="diamond" color={GATE_COLOR} label="Gate Review" tc={t.textMuted}/>
-          <LegendItem shape="diamond" color={TR_COLOR}   label="Tech Review"  tc={t.textMuted}/>
-          <LegendItem shape="bar"     color="#b94a08"    label="Robot Build"  tc={t.textMuted}/>
-          <LegendItem shape="bar"     color="#5b6abf"    label="Testing"      tc={t.textMuted}/>
-          {showToday&&<LegendItem shape="bar" color="#e74c3c" label="Today" tc={t.textMuted}/>}
-        </div>
-      </div>
-
+      <div style={{fontSize:13,color:t.textMuted,fontWeight:700,marginBottom:10,textTransform:"uppercase",letterSpacing:0.4}}>Timeline</div>
       {/* PNG capture target */}
       <div ref={timelineRef} style={{position:"relative",width:"100%",background:isDark?t.bg:"#ffffff",padding:"4px 0"}}>
+        {/* Section labels with color accent top-borders + downward bracket ticks */}
+        <div style={{display:"flex",height:22,marginBottom:4,fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.5px"}}>
+          <div style={{position:"relative",width:pc(planningEnd),display:"flex",alignItems:"center",justifyContent:"center",borderRight:"1px solid "+t.border,borderTop:"2px solid rgba(193,78,40,0.75)",overflow:"hidden",flexShrink:0,color:"rgba(193,78,40,0.9)"}}>
+            Planning (Ph0–Ph2)
+            <div style={{position:"absolute",left:0,top:0,width:2,height:8,background:"rgba(193,78,40,0.75)"}}/>
+            <div style={{position:"absolute",right:0,top:0,width:2,height:8,background:"rgba(193,78,40,0.75)"}}/>
+          </div>
+          <div style={{position:"relative",width:pc(developEnd-planningEnd),display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",flexShrink:0,borderRight:"2px dashed "+t.sop,borderTop:"2px solid rgba(20,143,119,0.8)",color:"rgba(20,143,119,0.95)"}}>
+            Development (Ph3–Ph6)
+            <div style={{position:"absolute",left:0,top:0,width:2,height:8,background:"rgba(20,143,119,0.8)"}}/>
+            <div style={{position:"absolute",right:-1,top:0,width:2,height:8,background:"rgba(20,143,119,0.8)"}}/>
+          </div>
+          <div style={{position:"relative",flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",borderTop:"2px solid rgba(26,82,118,0.7)",color:"rgba(26,82,118,0.9)"}}>
+            Production
+            <div style={{position:"absolute",left:0,top:0,width:2,height:8,background:"rgba(26,82,118,0.7)"}}/>
+            <div style={{position:"absolute",right:0,top:0,width:2,height:8,background:"rgba(26,82,118,0.7)"}}/>
+          </div>
+        </div>
+
         {/* Ruler */}
-        <div style={{position:"relative",height:48,marginBottom:6}}>
-          <div style={{position:"absolute",top:0,left:0,fontSize:12,color:t.rulerMajTx,fontWeight:700,whiteSpace:"nowrap"}}>{fmtD(startDate)}</div>
-          <div style={{position:"absolute",top:0,right:0,fontSize:12,color:t.rulerMajTx,fontWeight:700,whiteSpace:"nowrap"}}>
-            {fmtD(displayEndDate)}{truncated&&<span style={{fontSize:10,color:t.sop}}> +</span>}
-          </div>
-          <div style={{position:"absolute",bottom:0,left:0,right:0,height:1,background:t.rulerLine}}/>
-          {ticks.map((tk,i)=>(
-            <div key={i} style={{position:"absolute",left:pc(tk.x),transform:"translateX(-50%)",bottom:0,display:"flex",flexDirection:"column",alignItems:"center"}}>
-              {tk.label&&<span style={{fontSize:10,color:tk.major?t.rulerMajTx:t.rulerMinTx,whiteSpace:"nowrap",marginBottom:2,fontWeight:tk.major?700:400}}>{tk.label}</span>}
-              <div style={{width:1,height:tk.major?12:6,background:tk.major?t.rulerMajTk:t.rulerMinTk}}/>
+        {(()=>{
+          // Prevent Today label from overlapping start/end date text or G6/SOP label
+          const nearLeft=todayDispFrac<0.08;
+          const nearRight=todayDispFrac>0.92;
+          const nearSop=Math.abs(todayDispFrac-dspDevFrac)<0.05;
+          const todayLblTx=nearLeft?"translateX(4px)":nearRight?"translateX(calc(-100% - 4px))":nearSop?(todayDispFrac<dspDevFrac?"translateX(calc(-100% - 4px))":"translateX(4px)"):"translateX(-50%)";
+          return(
+          <div style={{position:"relative",height:48,marginBottom:6}}>
+            <div style={{position:"absolute",top:0,left:0,fontSize:12,color:t.rulerMajTx,fontWeight:700,whiteSpace:"nowrap"}}>{fmtD(startDate)}</div>
+            <div style={{position:"absolute",top:0,right:0,fontSize:12,color:t.rulerMajTx,fontWeight:700,whiteSpace:"nowrap"}}>
+              {fmtD(displayEndDate)}{truncated&&<span style={{fontSize:10,color:t.sop}}> +</span>}
             </div>
-          ))}
-          <div style={{position:"absolute",left:pc(dspDevFrac),top:0,bottom:0,display:"flex",flexDirection:"column",alignItems:"center",zIndex:6,transform:"translateX(-1px)"}}>
-            <span style={{fontSize:11,color:t.sop,whiteSpace:"nowrap",fontWeight:800,position:"absolute",top:0,left:"50%",transform:"translateX(-50%)"}}>G6 / SOP</span>
-            <div style={{position:"absolute",bottom:0,width:2,height:16,background:t.sop}}/>
-          </div>
-          {showToday&&(
-            <div style={{position:"absolute",left:pc(todayDispFrac),top:0,bottom:0,display:"flex",flexDirection:"column",alignItems:"center",zIndex:10,transform:"translateX(-1px)"}}>
-              <span style={{fontSize:11,color:"#e74c3c",whiteSpace:"nowrap",fontWeight:800,position:"absolute",top:0,left:"50%",transform:"translateX(-50%)"}}>Today</span>
-              <div style={{position:"absolute",bottom:0,width:2,height:14,background:"#e74c3c"}}/>
+            <div style={{position:"absolute",bottom:0,left:0,right:0,height:1,background:t.rulerLine}}/>
+            {ticks.map((tk,i)=>(
+              <div key={i} style={{position:"absolute",left:pc(tk.x),transform:"translateX(-50%)",bottom:0,display:"flex",flexDirection:"column",alignItems:"center",zIndex:1}}>
+                {tk.label&&<span style={{fontSize:10,color:tk.major?t.rulerMajTx:t.rulerMinTx,whiteSpace:"nowrap",marginBottom:2,fontWeight:tk.major?700:400}}>{tk.label}</span>}
+                <div style={{width:1,height:tk.major?12:6,background:tk.major?t.rulerMajTk:t.rulerMinTk}}/>
+              </div>
+            ))}
+            <div style={{position:"absolute",left:pc(dspDevFrac),top:0,bottom:0,display:"flex",flexDirection:"column",alignItems:"center",zIndex:6,transform:"translateX(-1px)"}}>
+              <span style={{fontSize:11,color:t.sop,whiteSpace:"nowrap",fontWeight:800,position:"absolute",top:0,left:"50%",transform:"translateX(-50%)"}}>G6 / SOP</span>
+              <div style={{position:"absolute",bottom:0,width:2,height:16,background:t.sop}}/>
             </div>
-          )}
-        </div>
+            {showToday&&showTodayLine&&(
+              <div style={{position:"absolute",left:pc(todayDispFrac),top:0,bottom:0,display:"flex",flexDirection:"column",alignItems:"center",zIndex:10,transform:"translateX(-1px)"}}>
+                <span style={{fontSize:11,color:"#e74c3c",whiteSpace:"nowrap",fontWeight:800,position:"absolute",top:0,left:0,transform:todayLblTx}}>Today</span>
+                <div style={{position:"absolute",bottom:0,width:2,height:14,background:"#e74c3c"}}/>
+              </div>
+            )}
+          </div>
+          );
+        })()}
 
-        {/* Section labels */}
-        <div style={{display:"flex",height:20,marginBottom:2,fontSize:10,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.5px",color:t.textDim}}>
-          <div style={{width:pc(planningEnd),display:"flex",alignItems:"center",justifyContent:"center",borderRight:"1px solid "+t.border,overflow:"hidden",flexShrink:0}}>Planning (Ph0–Ph2)</div>
-          <div style={{width:pc(developEnd-planningEnd),display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",flexShrink:0,borderRight:"2px dashed "+t.sop}}>Development (Ph3–Ph6)</div>
-          <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>Production</div>
-        </div>
-
-        {/* Timeline rows — overflow:hidden contains the gridlines */}
-        <div style={{position:"relative",overflow:"hidden"}}>
-          {ticks.map((tk,i)=>(
-            <div key={"gl-"+i} style={{position:"absolute",left:pc(tk.x),top:0,bottom:0,width:1,background:t.gridLine,pointerEvents:"none",zIndex:1}}/>
-          ))}
-          <div style={{position:"absolute",left:pc(dspDevFrac),top:0,bottom:0,width:0,borderLeft:"2px dashed "+t.sop,zIndex:4,pointerEvents:"none",transform:"translateX(-1px)"}}/>
-          {showToday&&<div style={{position:"absolute",left:pc(todayDispFrac),top:0,bottom:0,width:0,borderLeft:"2px dashed rgba(231,76,60,0.8)",zIndex:46,pointerEvents:"none",transform:"translateX(-1px)"}}/>}
+        {/* Timeline rows */}
+        <div style={{position:"relative"}}>
+          {/* Gridlines in isolated clipping layer so tooltips can overflow */}
+          <div style={{position:"absolute",top:0,left:0,right:0,bottom:0,overflow:"hidden",pointerEvents:"none",zIndex:0}}>
+            {ticks.map((tk,i)=>(
+              <div key={"gl-"+i} style={{position:"absolute",left:pc(tk.x),top:0,bottom:0,width:1,background:t.gridLine}}/>
+            ))}
+            <div style={{position:"absolute",left:pc(dspDevFrac),top:0,bottom:0,width:0,borderLeft:"2px dashed "+t.sop,zIndex:4,transform:"translateX(-1px)"}}/>
+            {showToday&&showTodayLine&&<div style={{position:"absolute",left:pc(todayDispFrac),top:0,bottom:0,width:0,borderLeft:"2px dashed rgba(231,76,60,0.8)",zIndex:46,transform:"translateX(-1px)"}}/>}
+          </div>
 
           {/* Phase blocks */}
           <div style={{display:"flex",height:64,position:"relative",overflow:"visible",borderBottom:"1px solid "+t.gridLine}}>
             {n.map((p,i)=>{const phase=PHASES[i];if(!phase)return null;
+              const ckey="ph-"+i;
               return(
                 <PhaseBlock key={i} phase={phase} idx={i} p={p} dspDevFrac={dspDevFrac} t={t}
                   devPhaseStart={devPhaseStart} devPhaseEnd={devPhaseEnd} devDays={devDays}
-                  onDragStart={i<n.length-1?e=>startPhaseDrag(e,i):null}/>
+                  onDragStart={i<n.length-1?e=>startPhaseDrag(e,i):null}
+                  completed={!!(completed&&completed[ckey])} onToggleComplete={()=>toggleComplete(ckey)}/>
               );})}
             {prodDispItems.map(item=>(
               <div key={item.ph.id} style={{width:pc(item.w),backgroundColor:item.ph.color,position:"relative",display:"flex",alignItems:"center",justifyContent:"center",borderLeft:"2px solid "+t.bg,overflow:"hidden",flexShrink:0}}>
@@ -1008,46 +1056,84 @@ function TimelinePanel({t,isDark,box,timelineRef,rowLbl,ticks,dspDevFrac,dspLaun
           </div>
 
           {/* Phase Exit Gate Reviews */}
-          <div style={{position:"relative",height:74,marginTop:2,overflow:"visible",borderBottom:"1px solid "+t.gridLine}}>
+          {!hiddenRows.gates&&<div style={{position:"relative",height:74,marginTop:2,overflow:"visible",borderBottom:"1px solid "+t.gridLine}}>
             <span style={rowLbl}>Phase Exit Gate Reviews</span>
-            {n.map((_,i)=>{const x=dspDevFrac*(st[i]+n[i]);return<Diamond key={i} x={x} label={"G"+i}
+            {n.map((_,i)=>{const x=dspDevFrac*(st[i]+n[i]);const ckey="gate-"+i;return<Diamond key={i} x={x} label={"G"+i}
               sub={i===6?"SOP":i===5?"Model Fix":undefined} color={GATE_COLOR} sz={i===6?15:11}
-              tc={t.milTx} sc={t.milSub} date={devPhaseDate(i,1)} desc={GATE_DESC[i]} t={t}/>;}) }
-            {showG7&&<Diamond x={dspDevFrac+dspLaunchFrac} label="G7" color={GATE_COLOR} sz={11} tc={t.milTx} sc={t.milSub} date={launchEndDate} desc={GATE_DESC[7]} t={t}/>}
-          </div>
+              tc={t.milTx} sc={t.milSub} date={devPhaseDate(i,1)} desc={GATE_DESC[i]} t={t}
+              completed={!!(completed&&completed[ckey])} onToggleComplete={()=>toggleComplete(ckey)}/>;}) }
+            {showG7&&(()=>{const ckey="gate-7";return<Diamond x={dspDevFrac+dspLaunchFrac} label="G7" color={GATE_COLOR} sz={11} tc={t.milTx} sc={t.milSub} date={launchEndDate} desc={GATE_DESC[7]} t={t} completed={!!(completed&&completed[ckey])} onToggleComplete={()=>toggleComplete(ckey)}/>;})()}
+          </div>}
 
           {/* Tech Reviews */}
-          <div style={{position:"relative",height:74,marginTop:2,overflow:"visible",borderBottom:"1px solid "+t.gridLine}}>
+          {!hiddenRows.reviews&&<div style={{position:"relative",height:74,marginTop:2,overflow:"visible",borderBottom:"1px solid "+t.gridLine}}>
             <span style={rowLbl}>Program Tech Reviews</span>
-            {DEFAULT_TR.map((tr,i)=>{if(!trVisible[i])return null;const x=dspDevPos(tr.phase,trPos[i]);
+            {DEFAULT_TR.map((tr,i)=>{if(!trVisible[i])return null;const x=dspDevPos(tr.phase,trPos[i]);const ckey="tr-"+tr.id;
               return<Diamond key={tr.id} x={x} label={tr.id} color={TR_COLOR} sz={12}
                 tc={t.milTx} sc={t.milSub} date={devPhaseDate(tr.phase,trPos[i])} desc={tr.desc} t={t}
-                onDragStart={e=>startTrDrag(e,i)} onDelete={()=>deleteTr(i)}/>;}) }
-          </div>
+                onDragStart={e=>startTrDrag(e,i)} onDelete={()=>deleteTr(i)}
+                completed={!!(completed&&completed[ckey])} onToggleComplete={()=>toggleComplete(ckey)}/>;}) }
+          </div>}
 
           {/* Robot Builds */}
-          <div style={{position:"relative",height:BUILD_BAR_H+28,marginTop:2,overflow:"visible",borderBottom:"1px solid "+t.gridLine}}>
+          {!hiddenRows.builds&&<div style={{position:"relative",height:BUILD_BAR_H+28,marginTop:2,overflow:"visible",borderBottom:"1px solid "+t.gridLine}}>
             <span style={rowLbl}>Robot Builds</span>
-            {dbList.map(b=>{const x1=dspDevPos(b.phase,b.s),x2=dspDevPos(b.phase,b.e),lbl=getLabelForBar(b,dbList);
+            {dbList.map(b=>{const x1=dspDevPos(b.phase,b.s),x2=dspDevPos(b.phase,b.e),lbl=getLabelForBar(b,dbList);const ckey="build-"+b.key;
               return<DragBar key={b.key} x1={x1} x2={x2} label={lbl}
                 dateStart={devPhaseDate(b.phase,b.s)} dateEnd={devPhaseDate(b.phase,b.e)} t={t} isDark={isDark}
                 onDragLeft={e=>startBuildDrag(e,b.key,"left",b)}
                 onDragRight={e=>startBuildDrag(e,b.key,"right",b)}
                 onDragBody={e=>startBuildDrag(e,b.key,"body",b)}
-                onDelete={()=>deleteDb(b.key)} onSplit={()=>splitDb(b.key)}/>;}) }
-          </div>
+                onDelete={()=>deleteDb(b.key)} onSplit={()=>splitDb(b.key)}
+                completed={!!(completed&&completed[ckey])} onToggleComplete={()=>toggleComplete(ckey)}/>;}) }
+          </div>}
 
           {/* Testing */}
-          <div style={{position:"relative",height:BUILD_BAR_H+28,marginTop:2,overflow:"visible"}}>
+          {!hiddenRows.testing&&<div style={{position:"relative",height:BUILD_BAR_H+28,marginTop:2,overflow:"visible"}}>
             <span style={rowLbl}>Testing</span>
-            {(testBars||[]).map(b=>{const x1=dspDevPos(b.phase,b.s),x2=dspDevPos(b.phase,b.e);
+            {(testBars||[]).map(b=>{const x1=dspDevPos(b.phase,b.s),x2=dspDevPos(b.phase,b.e);const ckey="test-"+b.key;
               return<DragBar key={b.key} x1={x1} x2={x2} label={b.id}
                 dateStart={devPhaseDate(b.phase,b.s)} dateEnd={devPhaseDate(b.phase,b.e)}
                 t={t} isDark={isDark} barColor="#5b6abf"
                 onDragLeft={e=>startTestDrag(e,b.key,"left",b)}
                 onDragRight={e=>startTestDrag(e,b.key,"right",b)}
                 onDragBody={e=>startTestDrag(e,b.key,"body",b)}
-                onDelete={()=>deleteTestBar(b.key)}/>;}) }
+                onDelete={()=>deleteTestBar(b.key)}
+                completed={!!(completed&&completed[ckey])} onToggleComplete={()=>toggleComplete(ckey)}/>;}) }
+          </div>}
+        </div>
+
+        {/* Bottom ruler — duplicate scale, labels below ticks */}
+        <div style={{position:"relative",height:44,marginTop:2}}>
+          <div style={{position:"absolute",top:0,left:0,right:0,height:1,background:t.rulerLine}}/>
+          {ticks.map((tk,i)=>(
+            <div key={"br-"+i} style={{position:"absolute",left:pc(tk.x),transform:"translateX(-50%)",top:0,display:"flex",flexDirection:"column",alignItems:"center"}}>
+              <div style={{width:1,height:tk.major?10:5,background:tk.major?t.rulerMajTk:t.rulerMinTk}}/>
+              {tk.label&&<span style={{fontSize:10,color:tk.major?t.rulerMajTx:t.rulerMinTx,whiteSpace:"nowrap",marginTop:2,fontWeight:tk.major?700:400}}>{tk.label}</span>}
+            </div>
+          ))}
+          <div style={{position:"absolute",left:pc(dspDevFrac),top:0,width:2,height:10,background:t.sop,zIndex:4,transform:"translateX(-1px)"}}/>
+          {showToday&&showTodayLine&&<div style={{position:"absolute",left:pc(todayDispFrac),top:0,width:2,height:10,background:"#e74c3c",zIndex:10,transform:"translateX(-1px)"}}/>}
+        </div>
+
+      </div>
+
+      {/* Legend + instructions row */}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginTop:10,gap:12,flexWrap:"wrap"}}>
+        <div style={{position:"relative",border:"1px solid "+t.border,borderRadius:6,padding:"10px 14px 8px",background:legendBg}}>
+          <div style={{position:"absolute",top:-9,left:10,padding:"0 5px",background:legendBg,fontSize:10,color:t.textDim,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.6px"}}>Legend · Click to show/hide</div>
+          <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
+            <LegendItem shape="diamond" color={GATE_COLOR} label="Gate Review" tc={t.textMuted} onClick={()=>toggleRow("gates")} hidden={hiddenRows.gates}/>
+            <LegendItem shape="diamond" color={TR_COLOR}   label="Tech Review"  tc={t.textMuted} onClick={()=>toggleRow("reviews")} hidden={hiddenRows.reviews}/>
+            <LegendItem shape="bar"     color="#b94a08"    label="Robot Build"  tc={t.textMuted} onClick={()=>toggleRow("builds")} hidden={hiddenRows.builds}/>
+            <LegendItem shape="bar"     color="#5b6abf"    label="Testing"      tc={t.textMuted} onClick={()=>toggleRow("testing")} hidden={hiddenRows.testing}/>
+            {showToday&&<LegendItem shape="bar" color="#e74c3c" label="Today" tc={t.textMuted} onClick={toggleTodayLine} hidden={!showTodayLine}/>}
+          </div>
+        </div>
+        <div style={{position:"relative",border:"1px solid "+t.border,borderRadius:6,padding:"10px 14px 8px",background:legendBg}}>
+          <div style={{position:"absolute",top:-9,left:10,padding:"0 5px",background:legendBg,fontSize:10,color:t.textDim,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.6px"}}>Tips</div>
+          <div style={{fontSize:11,color:t.textMuted,lineHeight:1.7,whiteSpace:"nowrap"}}>
+            Drag bars &amp; milestones to reposition · Hover for details &amp; options
           </div>
         </div>
       </div>
@@ -1056,23 +1142,24 @@ function TimelinePanel({t,isDark,box,timelineRef,rowLbl,ticks,dspDevFrac,dspLaun
 }
 
 // Phase block with hover tooltip
-function PhaseBlock({phase,idx,p,dspDevFrac,t,devPhaseStart,devPhaseEnd,devDays,onDragStart}){
-  const[hov,setHov]=useState(false);
+function PhaseBlock({phase,idx,p,dspDevFrac,t,devPhaseStart,devPhaseEnd,devDays,onDragStart,completed,onToggleComplete}){
+  const[hov,setHov]=useState(false);const timer=useRef(null);const showTimer=useRef(null);
+  function enter(){clearTimeout(timer.current);clearTimeout(showTimer.current);showTimer.current=setTimeout(()=>setHov(true),350);}
+  function leave(){clearTimeout(showTimer.current);timer.current=setTimeout(()=>setHov(false),150);}
+  useEffect(()=>()=>{clearTimeout(timer.current);clearTimeout(showTimer.current);},[]);
   return(
     <div style={{width:pc(p*dspDevFrac),backgroundColor:phase.color,position:"relative",display:"flex",alignItems:"center",justifyContent:"center",overflow:"visible",flexShrink:0,zIndex:hov?20:1}}
-      onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}>
+      onMouseEnter={enter} onMouseLeave={leave}>
       <div style={{textAlign:"center",pointerEvents:"none",padding:"0 4px",position:"relative",zIndex:2}}>
         <div style={{fontSize:p>0.07?14:12,fontWeight:800,color:t.phTx,whiteSpace:"nowrap"}}>Ph{idx}</div>
         {p>0.075&&<div style={{fontSize:11,color:t.phSub,marginTop:1,whiteSpace:"nowrap"}}>{phase.name}</div>}
         {p>0.09&&<div style={{fontSize:10,color:t.phDim,marginTop:1}}>{fmtW(Math.round(p*devDays/7))}</div>}
       </div>
-      {hov&&<PhaseTooltip phase={phase} idx={idx} startDate={devPhaseStart(idx)} endDate={devPhaseEnd(idx)} pct={p} devDays={devDays} t={t}/>}
-      {onDragStart&&(
-        <div onMouseDown={onDragStart} title="Drag to resize"
-          style={{position:"absolute",right:-5,top:0,width:10,height:"100%",cursor:"col-resize",zIndex:25,display:"flex",alignItems:"center",justifyContent:"center"}}>
-          <div style={{width:3,height:"70%",background:t.handle,borderRadius:2}}/>
-        </div>
-      )}
+      {completed&&<div style={{position:"absolute",top:4,right:4,zIndex:30,width:14,height:14,borderRadius:"50%",background:"#27ae60",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 1px 4px rgba(0,0,0,0.35)"}}>
+        <svg width={9} height={9} viewBox="0 0 9 9"><polyline points="1.5,4.5 3.5,6.5 7.5,2" stroke="#fff" strokeWidth={1.8} fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+      </div>}
+      {onDragStart&&<div onMouseDown={onDragStart} style={{position:"absolute",right:0,top:0,bottom:0,width:10,cursor:"ew-resize",zIndex:25}}/>}
+      {hov&&<PhaseTooltip phase={phase} idx={idx} startDate={devPhaseStart(idx)} endDate={devPhaseEnd(idx)} pct={p} devDays={devDays} t={t} completed={completed} onToggleComplete={onToggleComplete}/>}
     </div>
   );
 }
