@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Boston Dynamics PDP Timeline Tool</title>
+<title>Schedule Scenario Tool</title>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -165,7 +165,7 @@ function exportCSVFull(snap,mode,gran,startDate,sopDate,launchEndDate,sustainEnd
   const all=[metaRow,...rows];
   const csv=all.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n");
   const blob=new Blob([csv],{type:"text/csv"});const url=URL.createObjectURL(blob);
-  const a=document.createElement("a");a.href=url;a.download="pdp_timeline.csv";a.click();URL.revokeObjectURL(url);
+  const a=document.createElement("a");a.href=url;a.download="timeline.csv";a.click();URL.revokeObjectURL(url);
 }
 
 function importCSV(text,initSnap){
@@ -221,9 +221,9 @@ function BugModal({t,isDark,onClose}){
   const[text,setText]=useState("");
   function submit(){
     if(!text.trim())return;
-    const subject=encodeURIComponent("PDP Timeline Bug Report");
+    const subject=encodeURIComponent("Schedule Scenario Bug Report");
     const body=encodeURIComponent(text.trim());
-    window.open(`mailto:olewis@bostondynamics.com?subject=${subject}&body=${body}`);
+    window.open(`mailto:oliver.majer.lewis+git@gmail.com?subject=${subject}&body=${body}`);
     onClose();
   }
   return(
@@ -637,7 +637,7 @@ function App(){
     try{
       const canvas=await html2canvas(timelineRef.current,{backgroundColor:isDark?"#0b1220":"#ffffff",scale:2,useCORS:true,logging:false});
       const url=canvas.toDataURL("image/png");
-      const a=document.createElement("a");a.href=url;a.download="pdp_timeline.png";a.click();
+      const a=document.createElement("a");a.href=url;a.download="timeline.png";a.click();
     }catch(err){alert("PNG export failed: "+err.message);}
   }
 
@@ -695,8 +695,8 @@ function App(){
       <div style={{display:"flex",alignItems:"center",gap:10}}>
         {mode!=null&&<button onClick={()=>setMode(null)} title="Home" style={{padding:"6px 8px",borderRadius:6,border:"1px solid "+t.border,cursor:"pointer",background:t.btnBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><HouseIcon sz={17} c={t.btnText}/></button>}
         <div>
-          <div style={{fontSize:18,fontWeight:800,letterSpacing:0.3}}>Boston Dynamics Project Timeline Tool</div>
-          <div style={{fontSize:13,color:t.textMuted,marginTop:3}}>Product Development Process (PDP)</div>
+          <div style={{fontSize:18,fontWeight:800,letterSpacing:0.3}}>Schedule Scenario Tool</div>
+          <div style={{fontSize:13,color:t.textMuted,marginTop:3}}>Created by Oliver Lewis + Claude (Okay, mostly Claude)</div>
         </div>
       </div>
       <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
