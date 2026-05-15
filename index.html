@@ -8,9 +8,12 @@
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script src="https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📅</text></svg>">
 <style>
 *{box-sizing:border-box}
 body{margin:0;padding:0;background:#edf1f7;font-family:Inter,system-ui,sans-serif}
+.theme-fade,.theme-fade *{transition:background-color 0.25s ease,color 0.25s ease,border-color 0.25s ease}
+.theme-fade button,.theme-fade input{transition:background-color 0.15s,color 0.15s,border-color 0.15s}
 </style>
 </head>
 <body>
@@ -96,6 +99,36 @@ function resequence(list, fam) {
 }
 function buildLabel(fam, seq, siblings) { return siblings > 1 ? `${fam}${seq}` : `${fam}-Build`; }
 function today0() { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }
+function eggName(n){ return n.trim().toLowerCase()==="max"?"🎉 Qrevify! 🎉":n; }
+function triggerConfetti(){
+  const canvas=document.createElement('canvas');
+  canvas.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:9999';
+  canvas.width=window.innerWidth;canvas.height=window.innerHeight;
+  document.body.appendChild(canvas);
+  const ctx=canvas.getContext('2d');
+  const cols=['#f5c800','#1e60a5','#27ae60','#e05a5a','#9b59b6','#e67e22','#3498db','#ff69b4'];
+  const parts=Array.from({length:120},()=>({
+    x:Math.random()*canvas.width,y:Math.random()*canvas.height*0.4-canvas.height*0.2,
+    r:Math.random()*5+3,vx:Math.random()*4-2,vy:Math.random()*3+1,
+    tilt:Math.random()*10-5,ts:Math.random()*0.12+0.04,ta:0,
+    color:cols[Math.floor(Math.random()*cols.length)]
+  }));
+  let frame=0;const max=200;
+  function draw(){
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    const alpha=Math.max(0,1-Math.pow(frame/max,2));
+    parts.forEach(p=>{
+      ctx.save();ctx.globalAlpha=alpha;ctx.fillStyle=p.color;
+      ctx.translate(p.x,p.y);ctx.rotate(p.ta);
+      ctx.fillRect(-p.r/2,-p.r,p.r,p.r*2);
+      ctx.restore();
+      p.x+=p.vx;p.y+=p.vy;p.vy+=0.12;p.ta+=p.ts;
+    });
+    frame++;
+    if(frame<max)requestAnimationFrame(draw);else canvas.remove();
+  }
+  requestAnimationFrame(draw);
+}
 
 function getTicks(start, end, gran) {
   const ms = end - start;
@@ -131,8 +164,7 @@ function getTicks(start, end, gran) {
     return ticks;
   }
 
-  // Monthly
-  const skip = totalMonths > 48 ? 6 : totalMonths > 24 ? 3 : totalMonths > 12 ? 2 : 1;
+  // Monthly — always label every month
   cursor = new Date(start.getFullYear(), start.getMonth(), 1);
   if (cursor < start) cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
   for (safe = 0, x = 0; cursor <= end && safe < 300; safe++) {
@@ -141,7 +173,7 @@ function getTicks(start, end, gran) {
       const isMajor = cursor.getMonth() === 0;
       const lbl = isMajor
         ? MO[0] + " '" + String(cursor.getFullYear()).slice(2)
-        : (safe % skip === 0 ? MO[cursor.getMonth()] : "");
+        : MO[cursor.getMonth()];
       ticks.push({x: frac, label: lbl, major: isMajor});
     }
     cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
@@ -247,32 +279,54 @@ function BugModal({t,isDark,onClose}){
 }
 
 // Phase hover tooltip
-function PhaseTooltip({phase,idx,startDate,endDate,pct,devDays,t,completed,onToggleComplete}){
+function PhaseTooltip({phase,idx,startDate,endDate,pct,devDays,t,completed,hasOptions}){
   return(
-    <div style={{position:"absolute",top:"110%",left:"50%",transform:"translateX(-50%)",background:t.ttBg,border:"1px solid "+t.ttBorder,borderRadius:7,padding:"10px 13px",zIndex:200,whiteSpace:"nowrap",pointerEvents:"all",boxShadow:"0 6px 20px rgba(0,0,0,0.28)",minWidth:210}}>
-      <div style={{fontWeight:800,marginBottom:4,fontSize:14,display:"flex",alignItems:"center",gap:7,color:t.text}}>
-        <span style={{display:"inline-block",width:10,height:10,backgroundColor:phase.color,borderRadius:2}}/>
+    <div style={{position:"absolute",top:"110%",left:"50%",transform:"translateX(-50%)",background:t.ttBg,border:"1px solid "+t.ttBorder,borderRadius:7,padding:"10px 13px",zIndex:200,pointerEvents:"none",boxShadow:"0 6px 20px rgba(0,0,0,0.28)",width:260}}>
+      <div style={{fontWeight:800,marginBottom:4,fontSize:14,display:"flex",alignItems:"center",gap:7,color:t.text,whiteSpace:"nowrap"}}>
+        <span style={{display:"inline-block",width:10,height:10,backgroundColor:phase.color,borderRadius:2,flexShrink:0}}/>
         Ph{idx}: {phase.name}
       </div>
-      <div style={{fontSize:12,color:t.textMuted,marginBottom:2}}>{fmtD(startDate)} → {fmtD(endDate)}</div>
-      <div style={{fontSize:12,color:t.textMuted,marginBottom:4}}>{fmtW(Math.round(pct*devDays/7))} &nbsp;·&nbsp; {(pct*100).toFixed(1)}% of dev</div>
-      <div style={{fontSize:12,color:t.textDim,lineHeight:1.5,maxWidth:220}}>{phase.desc}</div>
-      {onToggleComplete&&<div onMouseDown={e=>{e.stopPropagation();onToggleComplete();}} style={{marginTop:8,paddingTop:6,borderTop:"1px solid "+t.ttBorder,fontSize:11,color:completed?"#27ae60":"#888",cursor:"pointer",textAlign:"center",fontWeight:700}}>{completed?"✓ Mark Incomplete":"○ Mark Complete"}</div>}
+      <div style={{fontSize:12,color:t.textMuted,marginBottom:2,whiteSpace:"nowrap"}}>{fmtD(startDate)} → {fmtD(endDate)}</div>
+      <div style={{fontSize:12,color:t.textMuted,marginBottom:4,whiteSpace:"nowrap"}}>{fmtW(Math.round(pct*devDays/7))} &nbsp;·&nbsp; {(pct*100).toFixed(1)}% of dev</div>
+      <div style={{fontSize:12,color:t.textDim,lineHeight:1.5,whiteSpace:"normal"}}>{phase.desc}</div>
+      {hasOptions&&<div style={{fontSize:10,color:t.textDim,marginTop:6,fontStyle:"italic"}}>Right-click for options</div>}
     </div>
   );
 }
 
 // Diamond
-function Diamond({x,label,sub,color,sz=12,tc,sc,date,desc,t,onDragStart,onDelete,completed,onToggleComplete}){
+function Diamond({x,label,sub,color,sz=12,tc,sc,date,desc,t,onDragStart,onDelete,completed,onToggleComplete,onRename}){
   const[hov,setHov]=useState(false);const timer=useRef(null);const showTimer=useRef(null);
+  const elemRef=useRef(null);
+  const renameInputRef=useRef(null);
+  const[menuPos,setMenuPos]=useState(null);
+  const[renameAnchor,setRenameAnchor]=useState(null);
+  const[renaming,setRenaming]=useState(false);const[renameVal,setRenameVal]=useState("");
   function enter(){clearTimeout(timer.current);clearTimeout(showTimer.current);showTimer.current=setTimeout(()=>setHov(true),350);}
   function leave(){clearTimeout(showTimer.current);timer.current=setTimeout(()=>setHov(false),150);}
   useEffect(()=>()=>{clearTimeout(timer.current);clearTimeout(showTimer.current);},[]);
+  useEffect(()=>{if(renaming)setTimeout(()=>{if(renameInputRef.current){renameInputRef.current.focus();renameInputRef.current.select();}},0);},[renaming]);
+  // Safety net: mouseleave can be missed on fast moves, re-renders, or after portals intercept the cursor.
+  // Watch mousemove while hovered and clear hov the moment the cursor leaves this subtree.
+  useEffect(()=>{
+    if(!hov)return;
+    function check(e){
+      if(!elemRef.current)return;
+      const under=document.elementFromPoint(e.clientX,e.clientY);
+      if(!under||!elemRef.current.contains(under)){clearTimeout(showTimer.current);setHov(false);}
+    }
+    document.addEventListener('mousemove',check);
+    return()=>document.removeEventListener('mousemove',check);
+  },[hov]);
   const d=sz*1.6,pts=(d/2)+",1 "+(d-1)+","+(d/2)+" "+(d/2)+","+(d-1)+" 1,"+(d/2);
+  const hasActions=onRename||onDelete||onToggleComplete;
+  const mItem=(danger)=>({fontSize:12,color:danger?"#e05a5a":t.text,cursor:"pointer",padding:"6px 14px",background:"transparent",border:"none",textAlign:"left",width:"100%",display:"block",whiteSpace:"nowrap",fontWeight:danger?700:500});
   return(
-    <div style={{position:"absolute",left:pc(x),transform:"translateX(-50%)",display:"inline-flex",flexDirection:"column",alignItems:"center",top:18,zIndex:hov?60:5,cursor:onDragStart?"ew-resize":"default"}}
-      onMouseEnter={enter} onMouseLeave={leave} onMouseDown={onDragStart}>
-      {hov&&date&&(
+    <div ref={elemRef} onDoubleClick={e=>e.stopPropagation()}
+         onContextMenu={hasActions?e=>{e.preventDefault();e.stopPropagation();setMenuPos({x:e.clientX,y:e.clientY});}:undefined}
+         style={{position:"absolute",left:pc(x),transform:"translateX(-50%)",display:"inline-flex",flexDirection:"column",alignItems:"center",top:18,zIndex:hov||menuPos||renaming?60:5,cursor:onDragStart?"ew-resize":"default"}}
+         onMouseEnter={enter} onMouseLeave={leave} onMouseDown={onDragStart}>
+      {hov&&date&&!menuPos&&!renaming&&(
         <div onMouseEnter={enter} onMouseLeave={leave} style={{position:"absolute",bottom:"100%",left:"50%",transform:"translateX(-50%)",paddingBottom:10,zIndex:300,pointerEvents:"all",display:"flex",flexDirection:"column",alignItems:"center"}}>
           <div style={{background:t.ttBg,border:"1px solid "+t.ttBorder,borderRadius:6,padding:"7px 11px",whiteSpace:"nowrap",boxShadow:"0 4px 16px rgba(0,0,0,0.28)"}}>
             <div style={{fontSize:13,fontWeight:800,color:t.text,marginBottom:3,display:"flex",alignItems:"center",gap:6}}>
@@ -280,15 +334,37 @@ function Diamond({x,label,sub,color,sz=12,tc,sc,date,desc,t,onDragStart,onDelete
               {label}{sub&&<span style={{fontWeight:500,color:t.textMuted}}>· {sub}</span>}
             </div>
             {desc&&<div style={{fontSize:12,color:t.textMuted,marginBottom:4}}>{desc}</div>}
-            <div style={{fontSize:13,fontWeight:700,color:t.text,borderTop:"1px solid "+t.border,paddingTop:4,marginTop:2,marginBottom:6}}>📅 {fmtD(date)}</div>
-            {(onDelete||onToggleComplete)&&(
-              <div style={{display:"flex",gap:6,borderTop:"1px solid "+t.ttBorder,paddingTop:6,flexWrap:"wrap"}}>
-                {onDelete&&<div onMouseDown={e=>{e.stopPropagation();onDelete();setHov(false);}} style={{fontSize:11,color:"#e05a5a",cursor:"pointer",fontWeight:700,padding:"2px 6px",borderRadius:3,border:"1px solid #e05a5a"}}>🗑 Delete</div>}
-                {onToggleComplete&&<div onMouseDown={e=>{e.stopPropagation();onToggleComplete();}} style={{fontSize:11,color:completed?"#27ae60":"#888",cursor:"pointer",fontWeight:700,padding:"2px 6px",borderRadius:3,border:"1px solid "+(completed?"#27ae60":"#888")}}>{completed?"✓ Completed":"○ Complete"}</div>}
-              </div>
-            )}
+            <div style={{fontSize:13,fontWeight:700,color:t.text,borderTop:"1px solid "+t.border,paddingTop:4,marginTop:2}}>📅 {fmtD(date)}</div>
+            {hasActions&&<div style={{fontSize:10,color:t.textDim,marginTop:5,fontStyle:"italic"}}>Right-click for options</div>}
           </div>
         </div>
+      )}
+      {menuPos&&ReactDOM.createPortal(
+        <>
+          <div style={{position:"fixed",inset:0,zIndex:1998}} onMouseDown={()=>setMenuPos(null)}/>
+          <div style={{position:"fixed",left:Math.min(menuPos.x,window.innerWidth-160),top:Math.min(menuPos.y,window.innerHeight-160),zIndex:1999,background:t.panel,border:"1px solid "+t.border,borderRadius:6,boxShadow:"0 4px 20px rgba(0,0,0,0.25)",minWidth:140,padding:"4px 0",overflow:"hidden"}}>
+            {onRename&&<button onMouseDown={e=>{e.stopPropagation();setRenameAnchor({x:menuPos.x,y:menuPos.y});setRenameVal(label);setRenaming(true);setMenuPos(null);}} style={mItem()}>✏ Rename</button>}
+            {onToggleComplete&&<button onMouseDown={e=>{e.stopPropagation();onToggleComplete();setMenuPos(null);}} style={mItem()}>{completed?"✓ Mark Incomplete":"○ Mark Complete"}</button>}
+            {onDelete&&<><div style={{height:1,background:t.border,margin:"4px 0"}}/><button onMouseDown={e=>{e.stopPropagation();onDelete();setMenuPos(null);}} style={mItem(true)}>🗑 Delete</button></>}
+          </div>
+        </>,
+        document.body
+      )}
+      {renaming&&ReactDOM.createPortal(
+        <>
+          <div style={{position:"fixed",inset:0,zIndex:1998}} onMouseDown={()=>setRenaming(false)}/>
+          <div style={{position:"fixed",left:Math.min((renameAnchor||{x:100}).x,window.innerWidth-240),top:Math.max(10,(renameAnchor||{y:200}).y-110),zIndex:1999,background:t.panel,border:"1px solid "+t.border,borderRadius:7,padding:"12px 14px",boxShadow:"0 6px 24px rgba(0,0,0,0.28)",width:220}} onMouseDown={e=>e.stopPropagation()}>
+            <div style={{fontSize:11,color:t.textMuted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,marginBottom:8}}>Rename</div>
+            <input ref={renameInputRef} value={renameVal} onChange={e=>setRenameVal(e.target.value)}
+              onKeyDown={e=>{if(e.key==="Enter"&&renameVal.trim()){onRename(renameVal.trim());setRenaming(false);}if(e.key==="Escape")setRenaming(false);}}
+              style={{width:"100%",fontSize:13,padding:"5px 8px",borderRadius:4,border:"1px solid "+t.inBorder,background:t.inBg,color:t.inText,outline:"none",marginBottom:9,boxSizing:"border-box"}}/>
+            <div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
+              <button onMouseDown={()=>setRenaming(false)} style={{padding:"4px 11px",borderRadius:4,border:"1px solid "+t.border,cursor:"pointer",fontSize:12,fontWeight:600,background:t.btnBg,color:t.btnText}}>Cancel</button>
+              <button onMouseDown={()=>{if(renameVal.trim()){onRename(renameVal.trim());setRenaming(false);}}} style={{padding:"4px 13px",borderRadius:4,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:t.btnAct,color:"#fff"}}>Save</button>
+            </div>
+          </div>
+        </>,
+        document.body
       )}
       <svg width={d} height={d} viewBox={"0 0 "+d+" "+d} overflow="visible" style={{marginTop:4}}>
         <polygon points={pts} fill={color} stroke={hov?"rgba(255,255,255,0.6)":"rgba(0,0,0,0.35)"} strokeWidth={hov?2:1}/>
@@ -304,30 +380,75 @@ function Diamond({x,label,sub,color,sz=12,tc,sc,date,desc,t,onDragStart,onDelete
 }
 
 // Generic draggable bar (used for builds and testing)
-function DragBar({x1,x2,label,dateStart,dateEnd,t,onDragLeft,onDragRight,onDragBody,onDelete,onSplit,barColor,isDark,completed,onToggleComplete}){
+function DragBar({x1,x2,label,dateStart,dateEnd,t,onDragLeft,onDragRight,onDragBody,onDelete,onSplit,barColor,isDark,completed,onToggleComplete,onRename}){
   const[hov,setHov]=useState(false);const timer=useRef(null);const showTimer=useRef(null);
+  const elemRef=useRef(null);
+  const renameInputRef=useRef(null);
+  const[menuPos,setMenuPos]=useState(null);
+  const[renameAnchor,setRenameAnchor]=useState(null);
+  const[renaming,setRenaming]=useState(false);const[renameVal,setRenameVal]=useState("");
   function enter(){clearTimeout(timer.current);clearTimeout(showTimer.current);showTimer.current=setTimeout(()=>setHov(true),350);}
   function leave(){clearTimeout(showTimer.current);timer.current=setTimeout(()=>setHov(false),150);}
   useEffect(()=>()=>{clearTimeout(timer.current);clearTimeout(showTimer.current);},[]);
+  useEffect(()=>{if(renaming)setTimeout(()=>{if(renameInputRef.current){renameInputRef.current.focus();renameInputRef.current.select();}},0);},[renaming]);
+  // Safety net: watch mousemove while hovered and clear hov if cursor has left this subtree.
+  useEffect(()=>{
+    if(!hov)return;
+    function check(e){
+      if(!elemRef.current)return;
+      const under=document.elementFromPoint(e.clientX,e.clientY);
+      if(!under||!elemRef.current.contains(under)){clearTimeout(showTimer.current);setHov(false);}
+    }
+    document.addEventListener('mousemove',check);
+    return()=>document.removeEventListener('mousemove',check);
+  },[hov]);
   if(x2<=x1)return null;
   const bg=barColor||"#b94a08";
   const bgHov=barColor?barColor+"cc":"#d4550a";
   const barTop=Math.round((BUILD_BAR_H+28-BUILD_BAR_H)/2);
+  const mItem=(danger)=>({fontSize:12,color:danger?"#e05a5a":t.text,cursor:"pointer",padding:"6px 14px",background:"transparent",border:"none",textAlign:"left",width:"100%",display:"block",whiteSpace:"nowrap",fontWeight:danger?700:500});
   return(
-    <div style={{position:"absolute",left:pc(x1),width:pc(x2-x1),top:barTop,zIndex:hov?50:5,height:BUILD_BAR_H+20}} onMouseEnter={enter} onMouseLeave={leave}>
-      {hov&&(
+    <div ref={elemRef} onDoubleClick={e=>e.stopPropagation()}
+         onContextMenu={e=>{e.preventDefault();e.stopPropagation();setMenuPos({x:e.clientX,y:e.clientY});}}
+         style={{position:"absolute",left:pc(x1),width:pc(x2-x1),top:barTop,zIndex:hov||menuPos||renaming?50:5,height:BUILD_BAR_H+20}}
+         onMouseEnter={enter} onMouseLeave={leave}>
+      {hov&&!menuPos&&!renaming&&(
         <div onMouseEnter={enter} onMouseLeave={leave} style={{position:"absolute",bottom:"100%",left:"50%",transform:"translateX(-50%)",paddingBottom:10,zIndex:300,pointerEvents:"all"}}>
           <div style={{background:t.ttBg,border:"1px solid "+t.ttBorder,borderRadius:6,padding:"7px 11px",whiteSpace:"nowrap",boxShadow:"0 4px 16px rgba(0,0,0,0.28)"}}>
             <div style={{fontSize:13,fontWeight:800,color:t.text,marginBottom:4,display:"flex",alignItems:"center",gap:6}}><div style={{width:10,height:10,backgroundColor:bg,borderRadius:2}}/>{label}</div>
             <div style={{fontSize:12,color:t.textMuted,marginBottom:1}}>Start: <span style={{color:t.text,fontWeight:600}}>{fmtD(dateStart)}</span></div>
-            <div style={{fontSize:12,color:t.textMuted,marginBottom:6}}>End: <span style={{color:t.text,fontWeight:600}}>{fmtD(dateEnd)}</span></div>
-            <div style={{display:"flex",gap:6,borderTop:"1px solid "+t.ttBorder,paddingTop:6,flexWrap:"wrap"}}>
-              {onSplit&&<div onMouseDown={e=>{e.stopPropagation();onSplit();setHov(false);}} style={{fontSize:11,color:"#3a9ad0",cursor:"pointer",fontWeight:700,padding:"2px 6px",borderRadius:3,border:"1px solid #3a9ad0"}}>✂ Split</div>}
-              {onDelete&&<div onMouseDown={e=>{e.stopPropagation();onDelete();}} style={{fontSize:11,color:"#e05a5a",cursor:"pointer",fontWeight:700,padding:"2px 6px",borderRadius:3,border:"1px solid #e05a5a"}}>🗑 Delete</div>}
-              {onToggleComplete&&<div onMouseDown={e=>{e.stopPropagation();onToggleComplete();}} style={{fontSize:11,color:completed?"#27ae60":"#888",cursor:"pointer",fontWeight:700,padding:"2px 6px",borderRadius:3,border:"1px solid "+(completed?"#27ae60":"#888")}}>{completed?"✓ Completed":"○ Complete"}</div>}
-            </div>
+            <div style={{fontSize:12,color:t.textMuted,marginBottom:4}}>End: <span style={{color:t.text,fontWeight:600}}>{fmtD(dateEnd)}</span></div>
+            <div style={{fontSize:10,color:t.textDim,fontStyle:"italic"}}>Right-click for options</div>
           </div>
         </div>
+      )}
+      {menuPos&&ReactDOM.createPortal(
+        <>
+          <div style={{position:"fixed",inset:0,zIndex:1998}} onMouseDown={()=>setMenuPos(null)}/>
+          <div style={{position:"fixed",left:Math.min(menuPos.x,window.innerWidth-164),top:Math.min(menuPos.y,window.innerHeight-160),zIndex:1999,background:t.panel,border:"1px solid "+t.border,borderRadius:6,boxShadow:"0 4px 20px rgba(0,0,0,0.25)",minWidth:148,padding:"4px 0",overflow:"hidden"}}>
+            {onRename&&<button onMouseDown={e=>{e.stopPropagation();setRenameAnchor({x:menuPos.x,y:menuPos.y});setRenameVal(label);setRenaming(true);setMenuPos(null);}} style={mItem()}>✏ Rename</button>}
+            {onSplit&&<button onMouseDown={e=>{e.stopPropagation();onSplit();setMenuPos(null);}} style={mItem()}>✂ Split</button>}
+            {onToggleComplete&&<button onMouseDown={e=>{e.stopPropagation();onToggleComplete();setMenuPos(null);}} style={mItem()}>{completed?"✓ Mark Incomplete":"○ Mark Complete"}</button>}
+            {onDelete&&<><div style={{height:1,background:t.border,margin:"4px 0"}}/><button onMouseDown={e=>{e.stopPropagation();onDelete();setMenuPos(null);}} style={mItem(true)}>🗑 Delete</button></>}
+          </div>
+        </>,
+        document.body
+      )}
+      {renaming&&ReactDOM.createPortal(
+        <>
+          <div style={{position:"fixed",inset:0,zIndex:1998}} onMouseDown={()=>setRenaming(false)}/>
+          <div style={{position:"fixed",left:Math.min((renameAnchor||{x:100}).x,window.innerWidth-240),top:Math.max(10,(renameAnchor||{y:200}).y-110),zIndex:1999,background:t.panel,border:"1px solid "+t.border,borderRadius:7,padding:"12px 14px",boxShadow:"0 6px 24px rgba(0,0,0,0.28)",width:220}} onMouseDown={e=>e.stopPropagation()}>
+            <div style={{fontSize:11,color:t.textMuted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5,marginBottom:8}}>Rename</div>
+            <input ref={renameInputRef} value={renameVal} onChange={e=>setRenameVal(e.target.value)}
+              onKeyDown={e=>{if(e.key==="Enter"&&renameVal.trim()){onRename(renameVal.trim());setRenaming(false);}if(e.key==="Escape")setRenaming(false);}}
+              style={{width:"100%",fontSize:13,padding:"5px 8px",borderRadius:4,border:"1px solid "+t.inBorder,background:t.inBg,color:t.inText,outline:"none",marginBottom:9,boxSizing:"border-box"}}/>
+            <div style={{display:"flex",gap:6,justifyContent:"flex-end"}}>
+              <button onMouseDown={()=>setRenaming(false)} style={{padding:"4px 11px",borderRadius:4,border:"1px solid "+t.border,cursor:"pointer",fontSize:12,fontWeight:600,background:t.btnBg,color:t.btnText}}>Cancel</button>
+              <button onMouseDown={()=>{if(renameVal.trim()){onRename(renameVal.trim());setRenaming(false);}}} style={{padding:"4px 13px",borderRadius:4,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:t.btnAct,color:"#fff"}}>Save</button>
+            </div>
+          </div>
+        </>,
+        document.body
       )}
       <div onMouseDown={onDragBody} style={{position:"absolute",left:0,right:0,top:0,height:BUILD_BAR_H,backgroundColor:hov?bgHov:bg,borderRadius:4,display:"flex",alignItems:"center",justifyContent:"center",cursor:"grab",boxShadow:"inset 0 2px 0 rgba(255,255,255,0.14)",transition:"background 0.15s",zIndex:5}}>
         <span style={{fontSize:12,color:"#fff",fontWeight:700,whiteSpace:"nowrap",pointerEvents:"none"}}>{label}</span>
@@ -364,17 +485,45 @@ function DateCell({date,onChange,t,isDark,readOnly}){
     style={{background:t.editBg,border:"1px solid "+t.border,color:t.text,fontSize:13,outline:"none",padding:"5px 8px",borderRadius:4,width:120,textAlign:"left",colorScheme:isDark?"dark":"light",flexShrink:0}}/>;
 }
 
+function CreateDialog({pending,onConfirm,onCancel,t}){
+  const[name,setName]=useState("");
+  const titles={build:"New Robot Build",test:"New Test Bar",customTr:"New Tech Review",customGate:"New Gate Marker"};
+  const hints={build:"e.g. Pilot Build, EVT, DVT…",test:"e.g. Integration Test, Qual Test…",customTr:"e.g. Design Review, Program Kickoff…",customGate:"e.g. G1.5, Program Go / No-Go…"};
+  const left=Math.min(pending.clientX,window.innerWidth-276);
+  const top=Math.max(10,pending.clientY-100);
+  return(
+    <div style={{position:"fixed",inset:0,zIndex:3000}} onMouseDown={onCancel}>
+      <div style={{position:"fixed",left,top,zIndex:3001,background:t.panel,border:"1px solid "+t.border,borderRadius:8,padding:"14px 16px",boxShadow:"0 8px 32px rgba(0,0,0,0.32)",width:260}} onMouseDown={e=>e.stopPropagation()}>
+        <div style={{fontSize:12,fontWeight:700,color:t.textMuted,textTransform:"uppercase",letterSpacing:0.5,marginBottom:10}}>{titles[pending.type]||"New Item"}</div>
+        <input autoFocus value={name} onChange={e=>setName(e.target.value)}
+          onKeyDown={e=>{if(e.key==="Enter"&&name.trim())onConfirm(name.trim());if(e.key==="Escape")onCancel();}}
+          placeholder={hints[pending.type]||"Name…"}
+          style={{width:"100%",fontSize:13,padding:"6px 9px",borderRadius:4,border:"1px solid "+t.inBorder,background:t.inBg,color:t.inText,outline:"none",marginBottom:10,boxSizing:"border-box"}}/>
+        <div style={{display:"flex",gap:7,justifyContent:"flex-end"}}>
+          <button onMouseDown={onCancel} style={{padding:"5px 13px",borderRadius:4,border:"1px solid "+t.border,cursor:"pointer",fontSize:12,fontWeight:600,background:t.btnBg,color:t.btnText}}>Cancel</button>
+          <button onMouseDown={()=>name.trim()&&onConfirm(name.trim())} style={{padding:"5px 14px",borderRadius:4,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:t.btnAct,color:"#fff",opacity:name.trim()?1:0.45,transition:"opacity 0.15s"}}>Create</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ScenarioTable({scenarios,loading,saveError,setSaveError,scenarioName,setScenarioName,onSave,onOverwrite,onRestore,onDelete,onRename,t,isDark,showSaveForm}){
   const[confirmDel,setConfirmDel]=useState(null);
   const[confirmOver,setConfirmOver]=useState(null);
   const[renaming,setRenaming]=useState(null);
   const[renameVal,setRenameVal]=useState("");
+  const[collapsed,setCollapsed]=useState(false);
   function smBtn(danger){return{padding:"3px 10px",borderRadius:4,border:"1px solid "+(danger?t.dangerText:t.border),cursor:"pointer",fontSize:12,fontWeight:600,background:danger?(isDark?t.dangerBg:"#fff4f4"):t.btnBg,color:danger?t.dangerText:t.btnText};}
   const thS={fontSize:11,color:t.rowLbl,textTransform:"uppercase",letterSpacing:"0.6px",padding:"0 10px 8px 0",textAlign:"left",fontWeight:600,borderBottom:"2px solid "+t.border,whiteSpace:"nowrap"};
   const tdS={fontSize:13,color:t.textMuted,padding:"7px 10px 7px 0",borderBottom:"1px solid "+t.border,verticalAlign:"middle"};
   return(
     <div style={{background:t.panel,borderRadius:7,border:"1px solid "+t.border,padding:"16px 20px",marginBottom:12}}>
-      <div style={{fontSize:13,color:t.textMuted,fontWeight:700,marginBottom:12,textTransform:"uppercase",letterSpacing:0.4}}>Saved Scenarios</div>
+      <div onClick={()=>setCollapsed(v=>!v)} style={{cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:collapsed?0:12}}>
+        <div style={{fontSize:13,color:t.textMuted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.4}}>Saved Scenarios</div>
+        <svg width={14} height={14} viewBox="0 0 14 14" style={{flexShrink:0,transform:collapsed?"rotate(-90deg)":"rotate(0deg)",transition:"transform 0.2s"}}><polyline points="2,5 7,10 12,5" stroke={t.textMuted} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+      </div>
+      {!collapsed&&<>
       {showSaveForm&&(
         <div style={{display:"flex",gap:8,marginBottom:6,alignItems:"center"}}>
           <input value={scenarioName} onChange={e=>{setScenarioName(e.target.value);if(saveError)setSaveError("");}}
@@ -430,6 +579,7 @@ function ScenarioTable({scenarios,loading,saveError,setSaveError,scenarioName,se
           </tbody>
         </table>
       )}
+      </>}
     </div>
   );
 }
@@ -475,7 +625,7 @@ function App(){
     testBars:initTestBars,
     anchor:defaultStartDate,durDays:defaultDurDays,
     launchWeeks:DEFAULT_LAUNCH_WK,sustainWeeks:DEFAULT_SUSTAIN_WK,
-    completed:{},
+    completed:{},customTrs:[],customGates:[],
   }),[]);
 
   const{current:snap,push:pushSnap,undo,redo,canUndo,canRedo}=useUndoable(initSnap);
@@ -485,6 +635,8 @@ function App(){
   const modeRef=useRef(null);useEffect(()=>{modeRef.current=mode;},[mode]);
   const[gran,setGran]=useState("monthly");
   const[confirmReset,setConfirmReset]=useState(false);
+  const[showPhaseTable,setShowPhaseTable]=useState(true);
+  const[pendingCreate,setPendingCreate]=useState(null);
   const[scenarios,setScenarios]=useState([]);
   const[scenarioName,setScName]=useState("");
   const[saveError,setSaveError]=useState("");
@@ -501,7 +653,7 @@ function App(){
 
   // Use the live drag position for rendering, but only commit to undo history on mouseup.
   const renderSnap=drag.current&&liveSnap.current?liveSnap.current:snap;
-  const{pcts,trPos,trVisible,dbList,testBars,anchor,durDays,launchWeeks,sustainWeeks,completed}=renderSnap;
+  const{pcts,trPos,trVisible,dbList,testBars,anchor,durDays,launchWeeks,sustainWeeks,completed,customTrs,customGates}=renderSnap;
   function ap(p){pushSnap({...snap,...p});}
   function toggleComplete(key){const c=snap.completed||{};ap({completed:{...c,[key]:!c[key]}});}
   function toggleRow(key){setHiddenRows(h=>({...h,[key]:!h[key]}));}
@@ -590,7 +742,55 @@ function App(){
   }
   function deleteTr(idx){setTrVisible(prev=>{const np=[...prev];np[idx]=false;return np;});}
   function deleteTestBar(key){setTestBars(prev=>prev.filter(b=>b.key!==key));}
-  function doReset(){pushSnap({...initSnap});setConfirmReset(false);}
+  function renameBuildBar(key,label){const l=eggName(label);if(l!==label)triggerConfetti();pushSnap({...snap,dbList:snap.dbList.map(b=>b.key===key?{...b,label:l}:b)});}
+  function renameTestBar(key,label){const l=eggName(label);if(l!==label)triggerConfetti();pushSnap({...snap,testBars:(snap.testBars||[]).map(b=>b.key===key?{...b,id:l}:b)});}
+  function addBuildBar(e){
+    const rect=timelineRef.current?.getBoundingClientRect();if(!rect)return;
+    const x=(e.clientX-rect.left)/rect.width;
+    let pi=0;for(let i=0;i<n.length;i++){const ps=st[i]*dspDevFrac,pe=(st[i]+n[i])*dspDevFrac;if(x>=ps&&x<pe){pi=i;break;}if(i===n.length-1)pi=i;}
+    const phW=n[pi]*dspDevFrac,ps2=st[pi]*dspDevFrac;
+    const frac=phW>0?clamp((x-ps2)/phW,0.05,0.95):0.5;
+    const s=Math.max(0.01,frac-0.1),ev=Math.min(0.99,frac+0.1);
+    setPendingCreate({type:"build",phase:pi,s,e:ev,clientX:e.clientX,clientY:e.clientY});
+  }
+  function addTestBar(e){
+    const rect=timelineRef.current?.getBoundingClientRect();if(!rect)return;
+    const x=(e.clientX-rect.left)/rect.width;
+    let pi=0;for(let i=0;i<n.length;i++){const ps=st[i]*dspDevFrac,pe=(st[i]+n[i])*dspDevFrac;if(x>=ps&&x<pe){pi=i;break;}if(i===n.length-1)pi=i;}
+    const phW=n[pi]*dspDevFrac,ps2=st[pi]*dspDevFrac;
+    const frac=phW>0?clamp((x-ps2)/phW,0.05,0.95):0.5;
+    const s=Math.max(0.01,frac-0.1),ev=Math.min(0.99,frac+0.1);
+    setPendingCreate({type:"test",phase:pi,s,e:ev,clientX:e.clientX,clientY:e.clientY});
+  }
+  function addCustomTr(e){
+    const rect=timelineRef.current?.getBoundingClientRect();if(!rect)return;
+    const x=(e.clientX-rect.left)/rect.width;
+    let pi=0,ppos=0.5;
+    for(let i=0;i<n.length;i++){const ps=st[i]*dspDevFrac,pe=(st[i]+n[i])*dspDevFrac;if(x>=ps&&x<pe){pi=i;const phW=pe-ps;ppos=phW>0?clamp((x-ps)/phW,0.02,0.98):0.5;break;}if(i===n.length-1){pi=i;ppos=0.5;}}
+    setPendingCreate({type:"customTr",phase:pi,pos:ppos,clientX:e.clientX,clientY:e.clientY});
+  }
+  function addCustomGate(e){
+    const rect=timelineRef.current?.getBoundingClientRect();if(!rect)return;
+    const x=(e.clientX-rect.left)/rect.width;
+    let pi=0,ppos=0.5;
+    for(let i=0;i<n.length;i++){const ps=st[i]*dspDevFrac,pe=(st[i]+n[i])*dspDevFrac;if(x>=ps&&x<pe){pi=i;const phW=pe-ps;ppos=phW>0?clamp((x-ps)/phW,0.02,0.98):0.5;break;}if(i===n.length-1){pi=i;ppos=0.5;}}
+    setPendingCreate({type:"customGate",phase:pi,pos:ppos,clientX:e.clientX,clientY:e.clientY});
+  }
+  function confirmCreate(name){
+    if(!pendingCreate)return;
+    const{type,phase,pos,s:pS,e:pE}=pendingCreate;
+    if(type==="build"){const nk=snap.dbList.reduce((m,b)=>Math.max(m,b.key),-1)+1;const bn=eggName(name);if(bn!==name)triggerConfetti();pushSnap({...snap,dbList:[...snap.dbList,{key:nk,family:"U",seq:nk+1,phase,s:pS,e:pE,label:bn}]});}
+    else if(type==="test"){const et=snap.testBars||[];const nk=et.reduce((m,b)=>typeof b.key==="number"?Math.max(m,b.key):m,-1)+1;const bn=eggName(name);if(bn!==name)triggerConfetti();pushSnap({...snap,testBars:[...et,{key:nk,id:bn,phase,s:pS,e:pE}]});}
+    else if(type==="customTr"){const cTrs=snap.customTrs||[];const nk=cTrs.reduce((m,b)=>Math.max(m,b.key),-1)+1;pushSnap({...snap,customTrs:[...cTrs,{key:nk,phase,pos,id:name}]});}
+    else if(type==="customGate"){const cGates=snap.customGates||[];const nk=cGates.reduce((m,b)=>Math.max(m,b.key),-1)+1;pushSnap({...snap,customGates:[...cGates,{key:nk,phase,pos,id:name}]});}
+    setPendingCreate(null);
+  }
+  function cancelCreate(){setPendingCreate(null);}
+  function deleteCustomTr(key){pushSnap({...snap,customTrs:(snap.customTrs||[]).filter(b=>b.key!==key)});}
+  function renameCustomTr(key,id){pushSnap({...snap,customTrs:(snap.customTrs||[]).map(b=>b.key===key?{...b,id}:b)});}
+  function deleteCustomGate(key){pushSnap({...snap,customGates:(snap.customGates||[]).filter(b=>b.key!==key)});}
+  function renameCustomGate(key,id){pushSnap({...snap,customGates:(snap.customGates||[]).map(b=>b.key===key?{...b,id}:b)});}
+  function doReset(){pushSnap({...initSnap});setConfirmReset(false);setPendingCreate(null);}
 
   // localStorage
   const LS_KEY="pdp_scenarios";
@@ -624,7 +824,7 @@ function App(){
       durDays:sc.durDays,
       launchWeeks:sc.launchWeeks||DEFAULT_LAUNCH_WK,
       sustainWeeks:sc.sustainWeeks||DEFAULT_SUSTAIN_WK,
-      completed:sc.completed||{},
+      completed:sc.completed||{},customTrs:sc.customTrs||[],customGates:sc.customGates||[],
     });
     if(sc.mode)setMode(sc.mode);
     if(sc.gran)setGran(sc.gran);
@@ -674,6 +874,8 @@ function App(){
       let next=null;
       if(d.type==="phase"){const sum=base.pcts.reduce((a,b)=>a+b,0);if(modeRef.current==="both"){const delta=dx/dspDevFrac*sum,min=sum*0.02;const nA=d.p0[d.idx]+delta,nB=d.p0[d.idx+1]-delta;if(nA>=min&&nB>=min){const np=[...d.p0];np[d.idx]=nA;np[d.idx+1]=nB;next={...base,pcts:np};}}else{const deltaDays=(dx/dspDevFrac)*base.durDays;const newDurDays=base.durDays+deltaDays;const minDays=base.durDays*0.02;if(newDurDays>minDays){const np=d.p0.map((p,i)=>i===d.idx?(p/sum*base.durDays+deltaDays)*sum/newDurDays:p*base.durDays/newDurDays);if(np.every(v=>v>0)){next={...base,pcts:np,durDays:newDurDays};}}}}
       else if(d.type==="tr"){const phW=dspDevFrac*bn[d.phase];const np=[...base.trPos];np[d.trIdx]=clamp(d.pos0+dx/phW,0.02,0.98);next={...base,trPos:np};}
+      else if(d.type==="customTr"){const phW=dspDevFrac*bn[d.phase];const np=(base.customTrs||[]).map(tr=>tr.key===d.trKey?{...tr,pos:clamp(d.pos0+dx/phW,0.02,0.98)}:tr);next={...base,customTrs:np};}
+      else if(d.type==="customGate"){const phW=dspDevFrac*bn[d.phase];const np=(base.customGates||[]).map(g=>g.key===d.gateKey?{...g,pos:clamp(d.pos0+dx/phW,0.02,0.98)}:g);next={...base,customGates:np};}
       else if(d.type==="build-left"){const phW=dspDevFrac*bn[d.phase];next={...base,dbList:base.dbList.map(b=>b.key===d.bKey?{...b,s:clamp(d.s0+dx/phW,0.01,d.e0-0.05)}:b)};}
       else if(d.type==="build-right"){const phW=dspDevFrac*bn[d.phase];next={...base,dbList:base.dbList.map(b=>b.key===d.bKey?{...b,e:clamp(d.e0+dx/phW,d.s0+0.05,0.99)}:b)};}
       else if(d.type==="build-body"){const phW=dspDevFrac*bn[d.phase];const span=d.e0-d.s0,newS=clamp(d.s0+dx/phW,0.01,0.99-span);next={...base,dbList:base.dbList.map(b=>b.key===d.bKey?{...b,s:newS,e:newS+span}:b)};}
@@ -692,6 +894,8 @@ function App(){
   function startTrDrag(e,ti){e.preventDefault();dragSnap.current=snap;drag.current={type:"tr",trIdx:ti,phase:DEFAULT_TR[ti].phase,x0:e.clientX,pos0:trPos[ti]};}
   function startBuildDrag(e,bKey,side,b){e.preventDefault();dragSnap.current=snap;drag.current={type:"build-"+side,bKey,phase:b.phase,x0:e.clientX,s0:b.s,e0:b.e};}
   function startTestDrag(e,bKey,side,b){e.preventDefault();dragSnap.current=snap;drag.current={type:"test-"+side,bKey,phase:b.phase,x0:e.clientX,s0:b.s,e0:b.e};}
+  function startCustomTrDrag(e,b){e.preventDefault();dragSnap.current=snap;drag.current={type:"customTr",trKey:b.key,phase:b.phase,x0:e.clientX,pos0:b.pos};}
+  function startCustomGateDrag(e,b){e.preventDefault();dragSnap.current=snap;drag.current={type:"customGate",gateKey:b.key,phase:b.phase,x0:e.clientX,pos0:b.pos};}
 
   useEffect(()=>{
     function onKey(e){if((e.metaKey||e.ctrlKey)&&e.key==="z"){e.preventDefault();if(e.shiftKey)redo();else undo();}if((e.metaKey||e.ctrlKey)&&e.key==="y"){e.preventDefault();redo();}}
@@ -722,7 +926,7 @@ function App(){
   const header=(
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12,flexWrap:"wrap",gap:8}}>
       <div style={{display:"flex",alignItems:"center",gap:10}}>
-        {mode!=null&&<button onClick={()=>setMode(null)} title="Home" style={{padding:"6px 8px",borderRadius:6,border:"1px solid "+t.border,cursor:"pointer",background:t.btnBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><HouseIcon sz={17} c={t.btnText}/></button>}
+        {mode!=null&&<button onClick={()=>{setMode(null);setPendingCreate(null);}} title="Home" style={{padding:"6px 8px",borderRadius:6,border:"1px solid "+t.border,cursor:"pointer",background:t.btnBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><HouseIcon sz={17} c={t.btnText}/></button>}
         <div>
           <div style={{fontSize:18,fontWeight:800,letterSpacing:0.3}}>Schedule Scenario Tool</div>
           <div style={{fontSize:13,color:t.textMuted,marginTop:3,display:"flex",alignItems:"center",gap:5}}>Created by Oliver Lewis + <svg width={14} height={14} viewBox="0 0 248 248" fill="none" style={{display:"inline-block",flexShrink:0}}><path d="M52.4285 162.873L98.7844 136.879L99.5485 134.602L98.7844 133.334H96.4921L88.7237 132.862L62.2346 132.153L39.3113 131.207L17.0249 130.026L11.4214 128.844L6.2 121.873L6.7094 118.447L11.4214 115.257L18.171 115.847L33.0711 116.911L55.485 118.447L71.6586 119.392L95.728 121.873H99.5485L100.058 120.337L98.7844 119.392L97.7656 118.447L74.5877 102.732L49.4995 86.1905L36.3823 76.62L29.3779 71.7757L25.8121 67.2858L24.2839 57.3608L30.6515 50.2716L39.3113 50.8623L41.4763 51.4531L50.2636 58.1879L68.9842 72.7209L93.4357 90.6804L97.0015 93.6343L98.4374 92.6652L98.6571 91.9801L97.0015 89.2625L83.757 65.2772L69.621 40.8192L63.2534 30.6579L61.5978 24.632C60.9565 22.1032 60.579 20.0111 60.579 17.4246L67.8381 7.49965L71.9133 6.19995L81.7193 7.49965L85.7946 11.0443L91.9074 24.9865L101.714 46.8451L116.996 76.62L121.453 85.4816L123.873 93.6343L124.764 96.1155H126.292V94.6976L127.566 77.9197L129.858 57.3608L132.15 30.8942L132.915 23.4505L136.608 14.4708L143.994 9.62643L149.725 12.344L154.437 19.0788L153.8 23.4505L150.998 41.6463L145.522 70.1215L141.957 89.2625H143.994L146.414 86.7813L156.093 74.0206L172.266 53.698L179.398 45.6635L187.803 36.802L193.152 32.5484H203.34L210.726 43.6549L207.415 55.1159L196.972 68.3492L188.312 79.5739L175.896 96.2095L168.191 109.585L168.882 110.689L170.738 110.53L198.755 104.504L213.91 101.787L231.994 98.7149L240.144 102.496L241.036 106.395L237.852 114.311L218.495 119.037L195.826 123.645L162.07 131.592L161.696 131.893L162.137 132.547L177.36 133.925L183.855 134.279H199.774L229.447 136.524L237.215 141.605L241.8 147.867L241.036 152.711L229.065 158.737L213.019 154.956L175.45 145.977L162.587 142.787H160.805V143.85L171.502 154.366L191.242 172.089L215.82 195.011L217.094 200.682L213.91 205.172L210.599 204.699L188.949 188.394L180.544 181.069L161.696 165.118H160.422V166.772L164.752 173.152L187.803 207.771L188.949 218.405L187.294 221.832L181.308 223.959L174.813 222.777L161.187 203.754L147.305 182.486L136.098 163.345L134.745 164.2L128.075 235.42L125.019 239.082L117.887 241.8L111.902 237.31L108.718 229.984L111.902 215.452L115.722 196.547L118.779 181.541L121.58 162.873L123.291 156.636L123.14 156.219L121.773 156.449L107.699 175.752L86.304 204.699L69.3663 222.777L65.291 224.431L58.2867 220.768L58.9235 214.27L62.8713 208.48L86.304 178.705L100.44 160.155L109.551 149.507L109.462 147.967L108.959 147.924L46.6977 188.512L35.6182 189.93L30.7788 185.44L31.4156 178.115L33.7079 175.752L52.4285 162.873Z" fill="#D97757"/></svg></div>
@@ -741,7 +945,8 @@ function App(){
           <button onClick={()=>setShowBug(true)} style={{...btn(false,true),display:"flex",alignItems:"center",gap:5}} title="Report a bug"><BugIcon sz={13} c={t.btnText}/> Report Bug</button>
           <div style={{width:1,height:22,background:t.border,margin:"0 2px"}}/>
           <button onClick={handleExportCSV} style={{...btn(false,true),background:isDark?"#0e2a1a":"#e8f5ee",color:isDark?"#4caf80":"#1a7a40",border:"1px solid "+(isDark?"#1a4a2a":"#a8d5b8")}}>⬇ CSV</button>
-          <button onClick={handleExportPNG} style={{...btn(false,true),display:"flex",alignItems:"center",gap:5,background:isDark?"#0e1a2c":"#e8eef8",color:isDark?"#6a9ad4":"#2a5090",border:"1px solid "+(isDark?"#1b2e45":"#b0c8e8")}}><CameraIcon sz={13} c={isDark?"#6a9ad4":"#2a5090"}/> PNG</button>
+          <button onClick={handleExportPNG} style={{...btn(false,true),display:"flex",alignItems:"center",gap:5,background:isDark?"#0e2a1a":"#e8f5ee",color:isDark?"#4caf80":"#1a7a40",border:"1px solid "+(isDark?"#1a4a2a":"#a8d5b8")}}><CameraIcon sz={13} c={isDark?"#4caf80":"#1a7a40"}/> PNG</button>
+          <div style={{width:1,height:22,background:t.border,margin:"0 2px"}}/>
         </>}
         <div style={{display:"flex",borderRadius:5,overflow:"hidden",border:"1px solid "+t.border}}>
           {[{v:false,icon:<SunIcon/>,lbl:"Light"},{v:true,icon:<MoonIcon/>,lbl:"Dark"}].map(item=>(
@@ -753,46 +958,62 @@ function App(){
   );
 
   return(
-    <div style={{background:t.bg,color:t.text,fontFamily:"Inter,system-ui,sans-serif",minHeight:"100vh",padding:"14px 16px",userSelect:"none",boxSizing:"border-box"}}>
+    <div className="theme-fade" style={{background:t.bg,color:t.text,fontFamily:"Inter,system-ui,sans-serif",minHeight:"100vh",padding:"14px 16px",userSelect:"none",boxSizing:"border-box"}}>
       <input ref={importInputRef} type="file" accept=".csv" style={{display:"none"}} onChange={handleImportFile}/>
       {showBug&&<BugModal t={t} isDark={isDark} onClose={()=>setShowBug(false)}/>}
       {header}
 
       {mode==null?(
         <div style={{display:"flex",flexDirection:"column",alignItems:"center",padding:"28px 16px",gap:20}}>
-          <div style={{textAlign:"center"}}>
-            <div style={{fontSize:18,fontWeight:700,color:t.text,marginBottom:6}}>How would you like to schedule this program?</div>
-            <div style={{fontSize:14,color:t.textMuted}}>Choose a direction, import a CSV, or load a saved scenario below.</div>
-          </div>
-          <div style={{display:"flex",gap:14,flexWrap:"wrap",justifyContent:"center"}}>
-            {[{m:"forward",arrow:"⚓",title:"Fixed Start",sub:"Pin a start date,\nSOP floats with duration",a:defaultStartDate},{m:"backward",arrow:"⚓",title:"Fixed SOP",sub:"Pin a target SOP date,\nstart date floats with duration",a:defaultSop}].map(item=>(
-              <button key={item.m} onClick={()=>{setMode(item.m);setAnchor(item.a);}}
+          {/* Start options */}
+          <div style={{width:"100%",maxWidth:800}}>
+            <div style={{textAlign:"center",marginBottom:16}}>
+              <div style={{fontSize:18,fontWeight:700,color:t.text,marginBottom:6}}>How would you like to schedule this program?</div>
+              <div style={{fontSize:14,color:t.textMuted}}>Choose a direction, import a CSV, or load a saved scenario below.</div>
+            </div>
+            <div style={{display:"flex",gap:14,flexWrap:"wrap",justifyContent:"center"}}>
+              {[{m:"forward",arrow:"⚓",title:"Fixed Start",sub:"Pin a start date,\nSOP floats with duration",a:defaultStartDate},{m:"backward",arrow:"⚓",title:"Fixed SOP",sub:"Pin a target SOP date,\nstart date floats with duration",a:defaultSop}].map(item=>(
+                <button key={item.m} onClick={()=>{setMode(item.m);setAnchor(item.a);}}
+                  style={{background:t.cardBg,border:"2px solid "+t.cardBorder,borderRadius:10,padding:"22px 30px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:10,minWidth:190,transition:"border-color 0.15s,background 0.15s"}}
+                  onMouseEnter={e=>{e.currentTarget.style.borderColor="#1e60a5";e.currentTarget.style.background=t.cardHov;}}
+                  onMouseLeave={e=>{e.currentTarget.style.borderColor=t.cardBorder;e.currentTarget.style.background=t.cardBg;}}>
+                  <div style={{fontSize:34,color:"#3a7ad0",lineHeight:1}}>{item.arrow}</div>
+                  <div style={{fontSize:16,fontWeight:700,color:t.text}}>{item.title}</div>
+                  <div style={{fontSize:13,color:t.textMuted,textAlign:"center",lineHeight:1.6,whiteSpace:"pre-line"}}>{item.sub}</div>
+                </button>
+              ))}
+              <button onClick={()=>importInputRef.current?.click()}
                 style={{background:t.cardBg,border:"2px solid "+t.cardBorder,borderRadius:10,padding:"22px 30px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:10,minWidth:190,transition:"border-color 0.15s,background 0.15s"}}
                 onMouseEnter={e=>{e.currentTarget.style.borderColor="#1e60a5";e.currentTarget.style.background=t.cardHov;}}
                 onMouseLeave={e=>{e.currentTarget.style.borderColor=t.cardBorder;e.currentTarget.style.background=t.cardBg;}}>
-                <div style={{fontSize:34,color:"#3a7ad0",lineHeight:1}}>{item.arrow}</div>
-                <div style={{fontSize:16,fontWeight:700,color:t.text}}>{item.title}</div>
-                <div style={{fontSize:13,color:t.textMuted,textAlign:"center",lineHeight:1.6,whiteSpace:"pre-line"}}>{item.sub}</div>
+                <div style={{fontSize:34,color:"#3a7ad0",lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}><UploadIcon sz={34} c="#3a7ad0"/></div>
+                <div style={{fontSize:16,fontWeight:700,color:t.text}}>Import CSV</div>
+                <div style={{fontSize:13,color:t.textMuted,textAlign:"center",lineHeight:1.6}}>Load a previously exported timeline CSV</div>
               </button>
-            ))}
-            <button onClick={()=>importInputRef.current?.click()}
-              style={{background:t.cardBg,border:"2px solid "+t.cardBorder,borderRadius:10,padding:"22px 30px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:10,minWidth:190,transition:"border-color 0.15s,background 0.15s"}}
-              onMouseEnter={e=>{e.currentTarget.style.borderColor="#1e60a5";e.currentTarget.style.background=t.cardHov;}}
-              onMouseLeave={e=>{e.currentTarget.style.borderColor=t.cardBorder;e.currentTarget.style.background=t.cardBg;}}>
-              <div style={{fontSize:34,color:"#3a7ad0",lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}><UploadIcon sz={34} c="#3a7ad0"/></div>
-              <div style={{fontSize:16,fontWeight:700,color:t.text}}>Import CSV</div>
-              <div style={{fontSize:13,color:t.textMuted,textAlign:"center",lineHeight:1.6}}>Load a previously exported timeline CSV</div>
-            </button>
+            </div>
+            {importError&&<div style={{marginTop:14,fontSize:13,color:t.dangerText,background:isDark?t.dangerBg:"#fff4f4",border:"1px solid "+t.dangerText,borderRadius:6,padding:"8px 14px",textAlign:"center"}}>{importError}</div>}
+            {importSuccess&&<div style={{marginTop:14,fontSize:13,color:"#1a7a40",background:isDark?"#0e2a1a":"#e8f5ee",border:"1px solid "+(isDark?"#1a4a2a":"#a8d5b8"),borderRadius:6,padding:"8px 14px",textAlign:"center"}}>{importSuccess}</div>}
           </div>
-          {importError&&<div style={{fontSize:13,color:t.dangerText,background:isDark?t.dangerBg:"#fff4f4",border:"1px solid "+t.dangerText,borderRadius:6,padding:"8px 14px",maxWidth:600,textAlign:"center"}}>{importError}</div>}
-          {importSuccess&&<div style={{fontSize:13,color:"#1a7a40",background:isDark?"#0e2a1a":"#e8f5ee",border:"1px solid "+(isDark?"#1a4a2a":"#a8d5b8"),borderRadius:6,padding:"8px 14px",maxWidth:600,textAlign:"center"}}>{importSuccess}</div>}
-          <div style={{width:"100%",maxWidth:700}}>
+          {/* Saved scenarios */}
+          <div style={{width:"100%",maxWidth:800}}>
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}><div style={{flex:1,height:1,background:t.border}}/><span style={{fontSize:13,color:t.textMuted,whiteSpace:"nowrap"}}>Saved Scenarios</span><div style={{flex:1,height:1,background:t.border}}/></div>
             <ScenarioTable scenarios={scenarios} loading={false} saveError={saveError} setSaveError={setSaveError}
               scenarioName={scenarioName} setScenarioName={setScName}
               onSave={saveScenario} onOverwrite={overwriteScenario}
               onRestore={sc=>{restoreScenario(sc);setMode(sc.mode||"forward");}}
               onDelete={deleteScenario} onRename={renameScenario} t={t} isDark={isDark} showSaveForm={false}/>
+          </div>
+          {/* Description */}
+          <div style={{width:"100%",maxWidth:800}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}><div style={{flex:1,height:1,background:t.border}}/><span style={{fontSize:13,color:t.textMuted,whiteSpace:"nowrap"}}>About</span><div style={{flex:1,height:1,background:t.border}}/></div>
+            <div style={{background:t.cardBg,border:"1px solid "+t.cardBorder,borderRadius:10,padding:"18px 22px"}}>
+              <div style={{fontSize:13,color:t.textMuted,lineHeight:1.75}}>
+                This tool is designed for <span style={{color:t.text,fontWeight:600}}>early-stage program planning</span>, where the goal is exploring schedule options quickly rather than managing detailed tasks. Use it to model development timelines, test different phase durations and milestone placements, and compare scenarios side-by-side — all before committing to a full project plan. Drag build bars and milestones directly on the timeline to reposition them, double-click any swimlane to add custom bars or markers, and right-click any element to rename, split, or delete it. Phase durations are adjustable in the Table View, and the anchor date and total program length can be set to match your program. When detailed scheduling is needed, use the <span style={{color:t.text,fontWeight:600}}>CSV export</span> to carry your milestone and phase data directly into Smartsheet — no re-entry required. PNG export captures the full timeline as a clean image for presentations and reviews.
+              </div>
+              <div style={{marginTop:12,paddingTop:12,borderTop:"1px solid "+t.border,fontSize:12,color:t.textMuted,lineHeight:1.65}}>
+                <span style={{fontWeight:700,color:isDark?"#e0a040":"#a06010"}}>⚠ Note:</span> Saved scenarios are stored in your browser only and will not persist if browser data is cleared. When in doubt, export a CSV — it can be re-imported at any time to fully restore your timeline.
+              </div>
+            </div>
           </div>
         </div>
       ):(
@@ -820,14 +1041,25 @@ function App(){
             startPhaseDrag={startPhaseDrag} startTrDrag={startTrDrag}
             startBuildDrag={startBuildDrag} startTestDrag={startTestDrag}
             deleteDb={deleteDb} splitDb={splitDb} deleteTr={deleteTr} deleteTestBar={deleteTestBar}
+            renameBuildBar={renameBuildBar} renameTestBar={renameTestBar}
+            addBuildBar={addBuildBar} addTestBar={addTestBar}
+            customTrs={customTrs||[]} customGates={customGates||[]}
+            addCustomTr={addCustomTr} addCustomGate={addCustomGate}
+            deleteCustomTr={deleteCustomTr} deleteCustomGate={deleteCustomGate}
+            renameCustomTr={renameCustomTr} renameCustomGate={renameCustomGate}
+            startCustomTrDrag={startCustomTrDrag} startCustomGateDrag={startCustomGateDrag}
             completed={completed||{}} toggleComplete={toggleComplete}
             hiddenRows={hiddenRows} toggleRow={toggleRow}
             showTodayLine={showTodayLine} toggleTodayLine={()=>setShowTodayLine(v=>!v)}
           />
 
-          {/* Phase Schedule */}
+          {/* Table View */}
           <div style={{...box,padding:"16px 20px"}}>
-            <div style={{fontSize:13,color:t.textMuted,fontWeight:700,marginBottom:10,textTransform:"uppercase",letterSpacing:0.4}}>Phase Schedule</div>
+            <div onClick={()=>setShowPhaseTable(v=>!v)} style={{cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:showPhaseTable?10:0}}>
+              <div style={{fontSize:13,color:t.textMuted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.4}}>Table View</div>
+              <svg width={14} height={14} viewBox="0 0 14 14" style={{flexShrink:0,transform:showPhaseTable?"rotate(0deg)":"rotate(-90deg)",transition:"transform 0.2s"}}><polyline points="2,5 7,10 12,5" stroke={t.textMuted} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </div>
+            {showPhaseTable&&<>
             <div style={{display:"flex",alignItems:"flex-end",gap:10,paddingBottom:2,marginBottom:2}}>
               <div style={{width:COL_SWATCH,flexShrink:0}}/><div style={{...thStyle,width:COL_PHASE,flexShrink:0}}>Phase</div>
               <div style={{...thStyle,width:COL_DATES,flexShrink:0}}>Start → End</div><div style={{...thStyle,flexGrow:1}}/>
@@ -884,6 +1116,7 @@ function App(){
               <span style={{fontSize:16,color:t.textDim,fontWeight:200,width:COL_SEP,flexShrink:0,textAlign:"center"}}>/</span>
               <div style={{width:COL_PCT,flexShrink:0}}><span style={{fontSize:13,color:t.textDim,padding:"5px 0"}}>—</span></div>
             </div>
+            </>}
           </div>
 
           <ScenarioTable scenarios={scenarios} loading={false} saveError={saveError} setSaveError={setSaveError}
@@ -893,6 +1126,7 @@ function App(){
             t={t} isDark={isDark} showSaveForm={true}/>
         </div>
       )}
+      {pendingCreate&&<CreateDialog pending={pendingCreate} onConfirm={confirmCreate} onCancel={cancelCreate} t={t}/>}
     </div>
   );
 }
@@ -963,11 +1197,19 @@ function TimelinePanel({t,isDark,box,timelineRef,rowLbl,ticks,dspDevFrac,dspLaun
   planningEnd,developEnd,n,st,devDays,prodDispItems,dbList,testBars,trVisible,trPos,
   devPhaseDate,devPhaseStart,devPhaseEnd,dspDevPos,getLabelForBar,
   startPhaseDrag,startTrDrag,startBuildDrag,startTestDrag,
-  deleteDb,splitDb,deleteTr,deleteTestBar,completed,toggleComplete,hiddenRows,toggleRow,showTodayLine,toggleTodayLine}){
+  deleteDb,splitDb,deleteTr,deleteTestBar,renameBuildBar,renameTestBar,addBuildBar,addTestBar,
+  customTrs,customGates,addCustomTr,addCustomGate,deleteCustomTr,deleteCustomGate,
+  renameCustomTr,renameCustomGate,startCustomTrDrag,startCustomGateDrag,
+  completed,toggleComplete,hiddenRows,toggleRow,showTodayLine,toggleTodayLine}){
   const legendBg=isDark?"rgba(255,255,255,0.03)":"#f0f2f5";
+  const[collapsed,setCollapsed]=useState(false);
   return(
     <div style={{...box,padding:"20px 22px"}}>
-      <div style={{fontSize:13,color:t.textMuted,fontWeight:700,marginBottom:10,textTransform:"uppercase",letterSpacing:0.4}}>Timeline</div>
+      <div onClick={()=>setCollapsed(v=>!v)} style={{cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:collapsed?0:10}}>
+        <div style={{fontSize:13,color:t.textMuted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.4}}>Timeline</div>
+        <svg width={14} height={14} viewBox="0 0 14 14" style={{flexShrink:0,transform:collapsed?"rotate(-90deg)":"rotate(0deg)",transition:"transform 0.2s"}}><polyline points="2,5 7,10 12,5" stroke={t.textMuted} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+      </div>
+      {!collapsed&&<>
       {/* PNG capture target */}
       <div ref={timelineRef} style={{position:"relative",width:"100%",background:isDark?t.bg:"#ffffff",padding:"4px 0"}}>
         {/* Section labels with color accent top-borders + downward bracket ticks */}
@@ -1056,40 +1298,55 @@ function TimelinePanel({t,isDark,box,timelineRef,rowLbl,ticks,dspDevFrac,dspLaun
           </div>
 
           {/* Phase Exit Gate Reviews */}
-          {!hiddenRows.gates&&<div style={{position:"relative",height:74,marginTop:2,overflow:"visible",borderBottom:"1px solid "+t.gridLine}}>
+          {!hiddenRows.gates&&<div onDoubleClick={addCustomGate} style={{position:"relative",height:74,marginTop:2,overflow:"visible",borderBottom:"1px solid "+t.gridLine,cursor:"crosshair"}}>
             <span style={rowLbl}>Phase Exit Gate Reviews</span>
             {n.map((_,i)=>{const x=dspDevFrac*(st[i]+n[i]);const ckey="gate-"+i;return<Diamond key={i} x={x} label={"G"+i}
               sub={i===6?"SOP":i===5?"Model Fix":undefined} color={GATE_COLOR} sz={i===6?15:11}
               tc={t.milTx} sc={t.milSub} date={devPhaseDate(i,1)} desc={GATE_DESC[i]} t={t}
               completed={!!(completed&&completed[ckey])} onToggleComplete={()=>toggleComplete(ckey)}/>;}) }
             {showG7&&(()=>{const ckey="gate-7";return<Diamond x={dspDevFrac+dspLaunchFrac} label="G7" color={GATE_COLOR} sz={11} tc={t.milTx} sc={t.milSub} date={launchEndDate} desc={GATE_DESC[7]} t={t} completed={!!(completed&&completed[ckey])} onToggleComplete={()=>toggleComplete(ckey)}/>;})()}
+            {customGates.map(g=>{const x=dspDevPos(g.phase,g.pos);const ckey="cgate-"+g.key;
+              return<Diamond key={"cgate-"+g.key} x={x} label={g.id} color={GATE_COLOR} sz={11}
+                tc={t.milTx} sc={t.milSub} date={devPhaseDate(g.phase,g.pos)} t={t}
+                onDragStart={e=>startCustomGateDrag(e,g)} onDelete={()=>deleteCustomGate(g.key)}
+                onRename={id=>renameCustomGate(g.key,id)}
+                completed={!!(completed&&completed[ckey])} onToggleComplete={()=>toggleComplete(ckey)}/>;
+            })}
           </div>}
 
           {/* Tech Reviews */}
-          {!hiddenRows.reviews&&<div style={{position:"relative",height:74,marginTop:2,overflow:"visible",borderBottom:"1px solid "+t.gridLine}}>
+          {!hiddenRows.reviews&&<div onDoubleClick={addCustomTr} style={{position:"relative",height:74,marginTop:2,overflow:"visible",borderBottom:"1px solid "+t.gridLine,cursor:"crosshair"}}>
             <span style={rowLbl}>Program Tech Reviews</span>
             {DEFAULT_TR.map((tr,i)=>{if(!trVisible[i])return null;const x=dspDevPos(tr.phase,trPos[i]);const ckey="tr-"+tr.id;
               return<Diamond key={tr.id} x={x} label={tr.id} color={TR_COLOR} sz={12}
                 tc={t.milTx} sc={t.milSub} date={devPhaseDate(tr.phase,trPos[i])} desc={tr.desc} t={t}
                 onDragStart={e=>startTrDrag(e,i)} onDelete={()=>deleteTr(i)}
                 completed={!!(completed&&completed[ckey])} onToggleComplete={()=>toggleComplete(ckey)}/>;}) }
+            {customTrs.map(tr=>{const x=dspDevPos(tr.phase,tr.pos);const ckey="ctr-"+tr.key;
+              return<Diamond key={"ctr-"+tr.key} x={x} label={tr.id} color={TR_COLOR} sz={12}
+                tc={t.milTx} sc={t.milSub} date={devPhaseDate(tr.phase,tr.pos)} t={t}
+                onDragStart={e=>startCustomTrDrag(e,tr)} onDelete={()=>deleteCustomTr(tr.key)}
+                onRename={id=>renameCustomTr(tr.key,id)}
+                completed={!!(completed&&completed[ckey])} onToggleComplete={()=>toggleComplete(ckey)}/>;
+            })}
           </div>}
 
           {/* Robot Builds */}
-          {!hiddenRows.builds&&<div style={{position:"relative",height:BUILD_BAR_H+28,marginTop:2,overflow:"visible",borderBottom:"1px solid "+t.gridLine}}>
+          {!hiddenRows.builds&&<div onDoubleClick={addBuildBar} style={{position:"relative",height:BUILD_BAR_H+28,marginTop:2,overflow:"visible",borderBottom:"1px solid "+t.gridLine,cursor:"crosshair"}}>
             <span style={rowLbl}>Robot Builds</span>
-            {dbList.map(b=>{const x1=dspDevPos(b.phase,b.s),x2=dspDevPos(b.phase,b.e),lbl=getLabelForBar(b,dbList);const ckey="build-"+b.key;
+            {dbList.map(b=>{const x1=dspDevPos(b.phase,b.s),x2=dspDevPos(b.phase,b.e),lbl=b.label||getLabelForBar(b,dbList);const ckey="build-"+b.key;
               return<DragBar key={b.key} x1={x1} x2={x2} label={lbl}
                 dateStart={devPhaseDate(b.phase,b.s)} dateEnd={devPhaseDate(b.phase,b.e)} t={t} isDark={isDark}
                 onDragLeft={e=>startBuildDrag(e,b.key,"left",b)}
                 onDragRight={e=>startBuildDrag(e,b.key,"right",b)}
                 onDragBody={e=>startBuildDrag(e,b.key,"body",b)}
                 onDelete={()=>deleteDb(b.key)} onSplit={()=>splitDb(b.key)}
+                onRename={label=>renameBuildBar(b.key,label)}
                 completed={!!(completed&&completed[ckey])} onToggleComplete={()=>toggleComplete(ckey)}/>;}) }
           </div>}
 
           {/* Testing */}
-          {!hiddenRows.testing&&<div style={{position:"relative",height:BUILD_BAR_H+28,marginTop:2,overflow:"visible"}}>
+          {!hiddenRows.testing&&<div onDoubleClick={addTestBar} style={{position:"relative",height:BUILD_BAR_H+28,marginTop:2,overflow:"visible",cursor:"crosshair"}}>
             <span style={rowLbl}>Testing</span>
             {(testBars||[]).map(b=>{const x1=dspDevPos(b.phase,b.s),x2=dspDevPos(b.phase,b.e);const ckey="test-"+b.key;
               return<DragBar key={b.key} x1={x1} x2={x2} label={b.id}
@@ -1099,6 +1356,7 @@ function TimelinePanel({t,isDark,box,timelineRef,rowLbl,ticks,dspDevFrac,dspLaun
                 onDragRight={e=>startTestDrag(e,b.key,"right",b)}
                 onDragBody={e=>startTestDrag(e,b.key,"body",b)}
                 onDelete={()=>deleteTestBar(b.key)}
+                onRename={label=>renameTestBar(b.key,label)}
                 completed={!!(completed&&completed[ckey])} onToggleComplete={()=>toggleComplete(ckey)}/>;}) }
           </div>}
         </div>
@@ -1133,23 +1391,39 @@ function TimelinePanel({t,isDark,box,timelineRef,rowLbl,ticks,dspDevFrac,dspLaun
         <div style={{position:"relative",border:"1px solid "+t.border,borderRadius:6,padding:"10px 14px 8px",background:legendBg}}>
           <div style={{position:"absolute",top:-9,left:10,padding:"0 5px",background:legendBg,fontSize:10,color:t.textDim,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.6px"}}>Tips</div>
           <div style={{fontSize:11,color:t.textMuted,lineHeight:1.7,whiteSpace:"nowrap"}}>
-            Drag bars &amp; milestones to reposition · Hover for details &amp; options
+            Drag bars &amp; milestones to reposition · Hover for date info · Right-click element for options · Double-click swimlane to add
           </div>
         </div>
       </div>
+      </>}
     </div>
   );
 }
 
-// Phase block with hover tooltip
+// Phase block with hover tooltip + right-click context menu
 function PhaseBlock({phase,idx,p,dspDevFrac,t,devPhaseStart,devPhaseEnd,devDays,onDragStart,completed,onToggleComplete}){
   const[hov,setHov]=useState(false);const timer=useRef(null);const showTimer=useRef(null);
+  const elemRef=useRef(null);
+  const[menuPos,setMenuPos]=useState(null);
   function enter(){clearTimeout(timer.current);clearTimeout(showTimer.current);showTimer.current=setTimeout(()=>setHov(true),350);}
   function leave(){clearTimeout(showTimer.current);timer.current=setTimeout(()=>setHov(false),150);}
   useEffect(()=>()=>{clearTimeout(timer.current);clearTimeout(showTimer.current);},[]);
+  useEffect(()=>{
+    if(!hov)return;
+    function check(e){
+      if(!elemRef.current)return;
+      const under=document.elementFromPoint(e.clientX,e.clientY);
+      if(!under||!elemRef.current.contains(under)){clearTimeout(showTimer.current);setHov(false);}
+    }
+    document.addEventListener('mousemove',check);
+    return()=>document.removeEventListener('mousemove',check);
+  },[hov]);
+  const mItem=()=>({fontSize:12,color:t.text,cursor:"pointer",padding:"6px 14px",background:"transparent",border:"none",textAlign:"left",width:"100%",display:"block",whiteSpace:"nowrap",fontWeight:500});
   return(
-    <div style={{width:pc(p*dspDevFrac),backgroundColor:phase.color,position:"relative",display:"flex",alignItems:"center",justifyContent:"center",overflow:"visible",flexShrink:0,zIndex:hov?20:1}}
-      onMouseEnter={enter} onMouseLeave={leave}>
+    <div ref={elemRef}
+         style={{width:pc(p*dspDevFrac),backgroundColor:phase.color,position:"relative",display:"flex",alignItems:"center",justifyContent:"center",overflow:"visible",flexShrink:0,zIndex:hov||menuPos?20:1}}
+         onMouseEnter={enter} onMouseLeave={leave}
+         onContextMenu={onToggleComplete?e=>{e.preventDefault();e.stopPropagation();setMenuPos({x:e.clientX,y:e.clientY});}:undefined}>
       <div style={{textAlign:"center",pointerEvents:"none",padding:"0 4px",position:"relative",zIndex:2}}>
         <div style={{fontSize:p>0.07?14:12,fontWeight:800,color:t.phTx,whiteSpace:"nowrap"}}>Ph{idx}</div>
         {p>0.075&&<div style={{fontSize:11,color:t.phSub,marginTop:1,whiteSpace:"nowrap"}}>{phase.name}</div>}
@@ -1159,7 +1433,16 @@ function PhaseBlock({phase,idx,p,dspDevFrac,t,devPhaseStart,devPhaseEnd,devDays,
         <svg width={9} height={9} viewBox="0 0 9 9"><polyline points="1.5,4.5 3.5,6.5 7.5,2" stroke="#fff" strokeWidth={1.8} fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
       </div>}
       {onDragStart&&<div onMouseDown={onDragStart} style={{position:"absolute",right:0,top:0,bottom:0,width:10,cursor:"ew-resize",zIndex:25}}/>}
-      {hov&&<PhaseTooltip phase={phase} idx={idx} startDate={devPhaseStart(idx)} endDate={devPhaseEnd(idx)} pct={p} devDays={devDays} t={t} completed={completed} onToggleComplete={onToggleComplete}/>}
+      {hov&&!menuPos&&<PhaseTooltip phase={phase} idx={idx} startDate={devPhaseStart(idx)} endDate={devPhaseEnd(idx)} pct={p} devDays={devDays} t={t} completed={completed} hasOptions={!!onToggleComplete}/>}
+      {menuPos&&ReactDOM.createPortal(
+        <>
+          <div style={{position:"fixed",inset:0,zIndex:1998}} onMouseDown={()=>setMenuPos(null)}/>
+          <div style={{position:"fixed",left:Math.min(menuPos.x,window.innerWidth-180),top:Math.min(menuPos.y,window.innerHeight-80),zIndex:1999,background:t.panel,border:"1px solid "+t.border,borderRadius:6,boxShadow:"0 4px 20px rgba(0,0,0,0.25)",minWidth:160,padding:"4px 0",overflow:"hidden"}}>
+            <button onMouseDown={e=>{e.stopPropagation();onToggleComplete();setMenuPos(null);}} style={mItem()}>{completed?"✓ Mark Incomplete":"○ Mark Complete"}</button>
+          </div>
+        </>,
+        document.body
+      )}
     </div>
   );
 }
