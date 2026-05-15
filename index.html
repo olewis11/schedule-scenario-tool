@@ -12,7 +12,7 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📅</text></svg>">
 <style>
 *{box-sizing:border-box}
-body{margin:0;padding:0;background:#edf1f7;font-family:Inter,system-ui,sans-serif}
+body{margin:0;padding:0;background:#edf1f7;font-family:Inter,system-ui,sans-serif;overflow-x:hidden}
 .theme-fade,.theme-fade *{transition:background-color 0.25s ease,color 0.25s ease,border-color 0.25s ease}
 .theme-fade button,.theme-fade input{transition:background-color 0.15s,color 0.15s,border-color 0.15s}
 </style>
@@ -547,7 +547,8 @@ function ScenarioTable({scenarios,loading,saveError,setSaveError,scenarioName,se
       {loading?<div style={{fontSize:13,color:t.textDim,padding:"10px 0"}}>Loading…</div>
       :scenarios.length===0?<div style={{fontSize:13,color:t.textDim,padding:"10px 0",fontStyle:"italic"}}>No saved scenarios yet. Open a timeline and use the Save Scenario option.</div>
       :(
-        <table style={{width:"100%",borderCollapse:"collapse"}}>
+        <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+        <table style={{width:"100%",minWidth:520,borderCollapse:"collapse"}}>
           <thead><tr>
             <th style={thS}>Name</th><th style={thS}>Created</th><th style={thS}>Last Modified</th>
             <th style={{...thS,textAlign:"right",paddingRight:0}}>Actions</th>
@@ -589,6 +590,7 @@ function ScenarioTable({scenarios,loading,saveError,setSaveError,scenarioName,se
             })}
           </tbody>
         </table>
+        </div>
       )}
       </>}
     </div>
@@ -614,8 +616,34 @@ class ErrorBoundary extends React.Component {
   }
 }
 
+// ── Mobile detection ──────────────────────────────────────────────────────────
+function useIsMobile(bp=640){
+  const mq=window.matchMedia(`(max-width:${bp}px)`);
+  const[mob,setMob]=useState(()=>mq.matches);
+  useEffect(()=>{
+    const fn=(e)=>setMob(e.matches);
+    if(mq.addEventListener)mq.addEventListener('change',fn);
+    else mq.addListener(fn);
+    return()=>{if(mq.removeEventListener)mq.removeEventListener('change',fn);else mq.removeListener(fn);};
+  },[bp]);
+  return mob;
+}
+function useIsPortrait(){
+  const mq=window.matchMedia('(orientation:portrait)');
+  const[portrait,setPortrait]=useState(()=>mq.matches);
+  useEffect(()=>{
+    const fn=(e)=>setPortrait(e.matches);
+    if(mq.addEventListener)mq.addEventListener('change',fn);
+    else mq.addListener(fn);
+    return()=>{if(mq.removeEventListener)mq.removeEventListener('change',fn);else mq.removeListener(fn);};
+  },[]);
+  return portrait;
+}
+
 // ── Main App ──────────────────────────────────────────────────────────────────
 function App(){
+  const mob=useIsMobile();
+  const portrait=useIsPortrait();
   const defaultDurDays=useMemo(()=>Math.round(365.25*2),[]);
   const defaultSop=useMemo(()=>addY(today0(),2.5),[]);
   const defaultStartDate=useMemo(()=>addD(defaultSop,-defaultDurDays),[]);
@@ -949,33 +977,33 @@ function App(){
   const thStyle={fontSize:11,color:t.rowLbl,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.6px",padding:"0 0 6px 0",borderBottom:"2px solid "+t.border,whiteSpace:"nowrap",textAlign:"left"};
 
   const header=(
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12,flexWrap:"wrap",gap:8}}>
+    <div style={{position:"sticky",top:0,zIndex:200,background:t.bg,display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:mob?8:12,marginLeft:mob?-10:-16,marginRight:mob?-10:-16,paddingLeft:mob?10:16,paddingRight:mob?10:16,paddingTop:mob?8:14,paddingBottom:mob?6:8,marginTop:mob?-8:-14,flexWrap:"wrap",gap:8,boxShadow:"0 1px 0 "+t.border}}>
       <div style={{display:"flex",alignItems:"center",gap:10}}>
         {mode!=null&&<button onClick={()=>{setMode(null);setPendingCreate(null);}} title="Home" style={{padding:"6px 8px",borderRadius:6,border:"1px solid "+t.border,cursor:"pointer",background:t.btnBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><HouseIcon sz={17} c={t.btnText}/></button>}
         <div>
-          <div style={{fontSize:18,fontWeight:800,letterSpacing:0.3}}>Schedule Scenario Tool</div>
-          <div style={{fontSize:13,color:t.textMuted,marginTop:3,display:"flex",alignItems:"center",gap:5}}>Created by Oliver Lewis + <svg width={14} height={14} viewBox="0 0 248 248" fill="none" style={{display:"inline-block",flexShrink:0}}><path d="M52.4285 162.873L98.7844 136.879L99.5485 134.602L98.7844 133.334H96.4921L88.7237 132.862L62.2346 132.153L39.3113 131.207L17.0249 130.026L11.4214 128.844L6.2 121.873L6.7094 118.447L11.4214 115.257L18.171 115.847L33.0711 116.911L55.485 118.447L71.6586 119.392L95.728 121.873H99.5485L100.058 120.337L98.7844 119.392L97.7656 118.447L74.5877 102.732L49.4995 86.1905L36.3823 76.62L29.3779 71.7757L25.8121 67.2858L24.2839 57.3608L30.6515 50.2716L39.3113 50.8623L41.4763 51.4531L50.2636 58.1879L68.9842 72.7209L93.4357 90.6804L97.0015 93.6343L98.4374 92.6652L98.6571 91.9801L97.0015 89.2625L83.757 65.2772L69.621 40.8192L63.2534 30.6579L61.5978 24.632C60.9565 22.1032 60.579 20.0111 60.579 17.4246L67.8381 7.49965L71.9133 6.19995L81.7193 7.49965L85.7946 11.0443L91.9074 24.9865L101.714 46.8451L116.996 76.62L121.453 85.4816L123.873 93.6343L124.764 96.1155H126.292V94.6976L127.566 77.9197L129.858 57.3608L132.15 30.8942L132.915 23.4505L136.608 14.4708L143.994 9.62643L149.725 12.344L154.437 19.0788L153.8 23.4505L150.998 41.6463L145.522 70.1215L141.957 89.2625H143.994L146.414 86.7813L156.093 74.0206L172.266 53.698L179.398 45.6635L187.803 36.802L193.152 32.5484H203.34L210.726 43.6549L207.415 55.1159L196.972 68.3492L188.312 79.5739L175.896 96.2095L168.191 109.585L168.882 110.689L170.738 110.53L198.755 104.504L213.91 101.787L231.994 98.7149L240.144 102.496L241.036 106.395L237.852 114.311L218.495 119.037L195.826 123.645L162.07 131.592L161.696 131.893L162.137 132.547L177.36 133.925L183.855 134.279H199.774L229.447 136.524L237.215 141.605L241.8 147.867L241.036 152.711L229.065 158.737L213.019 154.956L175.45 145.977L162.587 142.787H160.805V143.85L171.502 154.366L191.242 172.089L215.82 195.011L217.094 200.682L213.91 205.172L210.599 204.699L188.949 188.394L180.544 181.069L161.696 165.118H160.422V166.772L164.752 173.152L187.803 207.771L188.949 218.405L187.294 221.832L181.308 223.959L174.813 222.777L161.187 203.754L147.305 182.486L136.098 163.345L134.745 164.2L128.075 235.42L125.019 239.082L117.887 241.8L111.902 237.31L108.718 229.984L111.902 215.452L115.722 196.547L118.779 181.541L121.58 162.873L123.291 156.636L123.14 156.219L121.773 156.449L107.699 175.752L86.304 204.699L69.3663 222.777L65.291 224.431L58.2867 220.768L58.9235 214.27L62.8713 208.48L86.304 178.705L100.44 160.155L109.551 149.507L109.462 147.967L108.959 147.924L46.6977 188.512L35.6182 189.93L30.7788 185.44L31.4156 178.115L33.7079 175.752L52.4285 162.873Z" fill="#D97757"/></svg></div>
+          <div style={{fontSize:mob?15:18,fontWeight:800,letterSpacing:0.3}}>Schedule Scenario Tool</div>
+          {!mob&&<div style={{fontSize:13,color:t.textMuted,marginTop:3,display:"flex",alignItems:"center",gap:5}}>Created by Oliver Lewis + <svg width={14} height={14} viewBox="0 0 248 248" fill="none" style={{display:"inline-block",flexShrink:0}}><path d="M52.4285 162.873L98.7844 136.879L99.5485 134.602L98.7844 133.334H96.4921L88.7237 132.862L62.2346 132.153L39.3113 131.207L17.0249 130.026L11.4214 128.844L6.2 121.873L6.7094 118.447L11.4214 115.257L18.171 115.847L33.0711 116.911L55.485 118.447L71.6586 119.392L95.728 121.873H99.5485L100.058 120.337L98.7844 119.392L97.7656 118.447L74.5877 102.732L49.4995 86.1905L36.3823 76.62L29.3779 71.7757L25.8121 67.2858L24.2839 57.3608L30.6515 50.2716L39.3113 50.8623L41.4763 51.4531L50.2636 58.1879L68.9842 72.7209L93.4357 90.6804L97.0015 93.6343L98.4374 92.6652L98.6571 91.9801L97.0015 89.2625L83.757 65.2772L69.621 40.8192L63.2534 30.6579L61.5978 24.632C60.9565 22.1032 60.579 20.0111 60.579 17.4246L67.8381 7.49965L71.9133 6.19995L81.7193 7.49965L85.7946 11.0443L91.9074 24.9865L101.714 46.8451L116.996 76.62L121.453 85.4816L123.873 93.6343L124.764 96.1155H126.292V94.6976L127.566 77.9197L129.858 57.3608L132.15 30.8942L132.915 23.4505L136.608 14.4708L143.994 9.62643L149.725 12.344L154.437 19.0788L153.8 23.4505L150.998 41.6463L145.522 70.1215L141.957 89.2625H143.994L146.414 86.7813L156.093 74.0206L172.266 53.698L179.398 45.6635L187.803 36.802L193.152 32.5484H203.34L210.726 43.6549L207.415 55.1159L196.972 68.3492L188.312 79.5739L175.896 96.2095L168.191 109.585L168.882 110.689L170.738 110.53L198.755 104.504L213.91 101.787L231.994 98.7149L240.144 102.496L241.036 106.395L237.852 114.311L218.495 119.037L195.826 123.645L162.07 131.592L161.696 131.893L162.137 132.547L177.36 133.925L183.855 134.279H199.774L229.447 136.524L237.215 141.605L241.8 147.867L241.036 152.711L229.065 158.737L213.019 154.956L175.45 145.977L162.587 142.787H160.805V143.85L171.502 154.366L191.242 172.089L215.82 195.011L217.094 200.682L213.91 205.172L210.599 204.699L188.949 188.394L180.544 181.069L161.696 165.118H160.422V166.772L164.752 173.152L187.803 207.771L188.949 218.405L187.294 221.832L181.308 223.959L174.813 222.777L161.187 203.754L147.305 182.486L136.098 163.345L134.745 164.2L128.075 235.42L125.019 239.082L117.887 241.8L111.902 237.31L108.718 229.984L111.902 215.452L115.722 196.547L118.779 181.541L121.58 162.873L123.291 156.636L123.14 156.219L121.773 156.449L107.699 175.752L86.304 204.699L69.3663 222.777L65.291 224.431L58.2867 220.768L58.9235 214.27L62.8713 208.48L86.304 178.705L100.44 160.155L109.551 149.507L109.462 147.967L108.959 147.924L46.6977 188.512L35.6182 189.93L30.7788 185.44L31.4156 178.115L33.7079 175.752L52.4285 162.873Z" fill="#D97757"/></svg></div>}
         </div>
       </div>
       <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
         {mode!=null&&<>
-          <button onClick={undo} disabled={!canUndo} style={urBtn(canUndo)} title="Undo (Ctrl+Z)"><UndoIcon sz={13} c={canUndo?t.text:t.textDim}/> Undo</button>
-          <button onClick={redo} disabled={!canRedo} style={urBtn(canRedo)} title="Redo (Ctrl+Y)">Redo <RedoIcon sz={13} c={canRedo?t.text:t.textDim}/></button>
-          <div style={{width:1,height:22,background:t.border,margin:"0 2px"}}/>
+          <button onClick={undo} disabled={!canUndo} style={urBtn(canUndo)} title="Undo (Ctrl+Z)"><UndoIcon sz={13} c={canUndo?t.text:t.textDim}/>{!mob&&" Undo"}</button>
+          <button onClick={redo} disabled={!canRedo} style={urBtn(canRedo)} title="Redo (Ctrl+Y)">{!mob&&"Redo "}<RedoIcon sz={13} c={canRedo?t.text:t.textDim}/></button>
+          {!mob&&<div style={{width:1,height:22,background:t.border,margin:"0 2px"}}/>}
           {confirmReset?(<div style={{display:"flex",alignItems:"center",gap:6,background:isDark?t.dangerBg:"#fff4f4",border:"1px solid "+t.dangerText,borderRadius:5,padding:"3px 8px"}}>
             <span style={{fontSize:12,color:t.dangerText,fontWeight:600,whiteSpace:"nowrap"}}>Reset?</span>
             <button onClick={doReset} style={{padding:"3px 10px",borderRadius:4,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:t.dangerText,color:"#fff"}}>Yes</button>
             <button onClick={()=>setConfirmReset(false)} style={{padding:"3px 10px",borderRadius:4,border:"1px solid "+t.border,cursor:"pointer",fontSize:12,fontWeight:600,background:t.btnBg,color:t.btnText}}>No</button>
           </div>):<button onClick={()=>setConfirmReset(true)} style={btn(false,true)}>Reset</button>}
-          <button onClick={()=>setShowBug(true)} style={{...btn(false,true),display:"flex",alignItems:"center",gap:5}} title="Report a bug"><BugIcon sz={13} c={t.btnText}/> Report Bug</button>
-          <div style={{width:1,height:22,background:t.border,margin:"0 2px"}}/>
-          <button onClick={handleExportCSV} style={{...btn(false,true),background:isDark?"#0e2a1a":"#e8f5ee",color:isDark?"#4caf80":"#1a7a40",border:"1px solid "+(isDark?"#1a4a2a":"#a8d5b8")}}>⬇ CSV</button>
-          <button onClick={handleExportPNG} style={{...btn(false,true),display:"flex",alignItems:"center",gap:5,background:isDark?"#0e2a1a":"#e8f5ee",color:isDark?"#4caf80":"#1a7a40",border:"1px solid "+(isDark?"#1a4a2a":"#a8d5b8")}}><CameraIcon sz={13} c={isDark?"#4caf80":"#1a7a40"}/> PNG</button>
-          <div style={{width:1,height:22,background:t.border,margin:"0 2px"}}/>
+          <button onClick={()=>setShowBug(true)} style={{...btn(false,true),display:"flex",alignItems:"center",gap:5}} title="Report a bug"><BugIcon sz={13} c={t.btnText}/>{!mob&&" Report Bug"}</button>
+          {!mob&&<div style={{width:1,height:22,background:t.border,margin:"0 2px"}}/>}
+          <button onClick={handleExportCSV} style={{...btn(false,true),background:isDark?"#0e2a1a":"#e8f5ee",color:isDark?"#4caf80":"#1a7a40",border:"1px solid "+(isDark?"#1a4a2a":"#a8d5b8")}}>⬇{!mob&&" CSV"}</button>
+          <button onClick={handleExportPNG} style={{...btn(false,true),display:"flex",alignItems:"center",gap:5,background:isDark?"#0e2a1a":"#e8f5ee",color:isDark?"#4caf80":"#1a7a40",border:"1px solid "+(isDark?"#1a4a2a":"#a8d5b8")}}><CameraIcon sz={13} c={isDark?"#4caf80":"#1a7a40"}/>{!mob&&" PNG"}</button>
+          {!mob&&<div style={{width:1,height:22,background:t.border,margin:"0 2px"}}/>}
         </>}
         <div style={{display:"flex",borderRadius:5,overflow:"hidden",border:"1px solid "+t.border}}>
           {[{v:false,icon:<SunIcon/>,lbl:"Light"},{v:true,icon:<MoonIcon/>,lbl:"Dark"}].map(item=>(
-            <button key={item.lbl} onClick={()=>setDark(item.v)} style={{padding:"5px 11px",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:5,fontSize:13,fontWeight:600,background:isDark===item.v?t.btnAct:t.btnBg,color:isDark===item.v?"#fff":t.btnText,transition:"background 0.15s"}}>{item.icon}{item.lbl}</button>
+            <button key={item.lbl} onClick={()=>setDark(item.v)} style={{padding:"5px 11px",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:5,fontSize:13,fontWeight:600,background:isDark===item.v?t.btnAct:t.btnBg,color:isDark===item.v?"#fff":t.btnText,transition:"background 0.15s"}}>{item.icon}{!mob&&item.lbl}</button>
           ))}
         </div>
       </div>
@@ -983,13 +1011,16 @@ function App(){
   );
 
   return(
-    <div className="theme-fade" style={{background:t.bg,color:t.text,fontFamily:"Inter,system-ui,sans-serif",minHeight:"100vh",padding:"14px 16px",userSelect:"none",boxSizing:"border-box"}}>
+    <div className="theme-fade" style={{background:t.bg,color:t.text,fontFamily:"Inter,system-ui,sans-serif",minHeight:"100vh",padding:mob?"0 10px 8px":"0 16px 16px",userSelect:"none",boxSizing:"border-box"}}>
       <input ref={importInputRef} type="file" accept=".csv" style={{display:"none"}} onChange={handleImportFile}/>
       {showBug&&<BugModal t={t} isDark={isDark} onClose={()=>setShowBug(false)}/>}
       {header}
+      {mob&&portrait&&<div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"7px 12px",marginTop:14,marginBottom:10,background:isDark?"rgba(255,255,255,0.05)":"rgba(0,0,0,0.04)",borderRadius:6,border:"1px solid "+t.border,fontSize:12,color:t.textMuted}}>
+        <span style={{fontSize:16}}>📱</span> Rotate to landscape for a better experience
+      </div>}
 
       {mode==null?(
-        <div style={{display:"flex",flexDirection:"column",alignItems:"center",padding:"28px 16px",gap:20}}>
+        <div style={{display:"flex",flexDirection:"column",alignItems:"center",padding:mob?"12px 0":"28px 16px",gap:mob?14:20}}>
           {/* Start options */}
           <div style={{width:"100%",maxWidth:800}}>
             <div style={{textAlign:"center",marginBottom:16}}>
@@ -999,7 +1030,7 @@ function App(){
             <div style={{display:"flex",gap:14,flexWrap:"wrap",justifyContent:"center"}}>
               {[{m:"forward",arrow:"⚓",title:"Fixed Start",sub:"Pin a start date,\nSOP floats with duration",a:defaultStartDate},{m:"backward",arrow:"⚓",title:"Fixed SOP",sub:"Pin a target SOP date,\nstart date floats with duration",a:defaultSop}].map(item=>(
                 <button key={item.m} onClick={()=>{setMode(item.m);setAnchor(item.a);}}
-                  style={{background:t.cardBg,border:"2px solid "+t.cardBorder,borderRadius:10,padding:"22px 30px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:10,minWidth:190,transition:"border-color 0.15s,background 0.15s"}}
+                  style={{background:t.cardBg,border:"2px solid "+t.cardBorder,borderRadius:10,padding:mob?"16px 20px":"22px 30px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:10,minWidth:mob?undefined:190,width:mob?"100%":undefined,transition:"border-color 0.15s,background 0.15s"}}
                   onMouseEnter={e=>{e.currentTarget.style.borderColor="#1e60a5";e.currentTarget.style.background=t.cardHov;}}
                   onMouseLeave={e=>{e.currentTarget.style.borderColor=t.cardBorder;e.currentTarget.style.background=t.cardBg;}}>
                   <div style={{fontSize:34,color:"#3a7ad0",lineHeight:1}}>{item.arrow}</div>
@@ -1008,7 +1039,7 @@ function App(){
                 </button>
               ))}
               <button onClick={()=>importInputRef.current?.click()}
-                style={{background:t.cardBg,border:"2px solid "+t.cardBorder,borderRadius:10,padding:"22px 30px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:10,minWidth:190,transition:"border-color 0.15s,background 0.15s"}}
+                style={{background:t.cardBg,border:"2px solid "+t.cardBorder,borderRadius:10,padding:mob?"16px 20px":"22px 30px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:10,minWidth:mob?undefined:190,width:mob?"100%":undefined,transition:"border-color 0.15s,background 0.15s"}}
                 onMouseEnter={e=>{e.currentTarget.style.borderColor="#1e60a5";e.currentTarget.style.background=t.cardHov;}}
                 onMouseLeave={e=>{e.currentTarget.style.borderColor=t.cardBorder;e.currentTarget.style.background=t.cardBg;}}>
                 <div style={{fontSize:34,color:"#3a7ad0",lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}><UploadIcon sz={34} c="#3a7ad0"/></div>
@@ -1041,7 +1072,7 @@ function App(){
       ):(
         <div>
           <ControlsBar
-            t={t} isDark={isDark} box={box} btn={btn} inpS={inpS}
+            t={t} isDark={isDark} box={box} btn={btn} inpS={inpS} mob={mob}
             mode={mode} toggleFixed={toggleFixed}
             startDate={startDate} handleStartDate={handleStartDate}
             sopDate={sopDate} handleSopDate={handleSopDate}
@@ -1050,8 +1081,9 @@ function App(){
             devDays={devDays}
           />
 
+          <div style={mob?{overflowX:"auto",WebkitOverflowScrolling:"touch",marginBottom:12,borderRadius:7,border:"1px solid "+t.border,background:t.panel}:{}}>
           <TimelinePanel
-            t={t} isDark={isDark} box={box} timelineRef={timelineRef} rowLbl={rowLbl}
+            t={t} isDark={isDark} box={mob?{...box,marginBottom:0,border:"none",borderRadius:0}:box} timelineRef={timelineRef} rowLbl={rowLbl} mob={mob}
             ticks={ticks} dspDevFrac={dspDevFrac} dspLaunchFrac={dspLaunchFrac}
             todayDispFrac={todayDispFrac} showToday={showToday} showG7={showG7} truncated={truncated}
             startDate={startDate} displayEndDate={displayEndDate} sopDate={sopDate} launchEndDate={launchEndDate}
@@ -1074,6 +1106,7 @@ function App(){
             hiddenRows={hiddenRows} toggleRow={toggleRow}
             showTodayLine={showTodayLine} toggleTodayLine={()=>setShowTodayLine(v=>!v)}
           />
+          </div>
 
           {/* Table View */}
           <div style={{...box,padding:"16px 20px"}}>
@@ -1085,6 +1118,8 @@ function App(){
               <svg width={14} height={14} viewBox="0 0 14 14" style={{flexShrink:0,transform:showPhaseTable?"rotate(0deg)":"rotate(-90deg)",transition:"transform 0.2s"}}><polyline points="2,5 7,10 12,5" stroke={t.textMuted} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </div>
             {showPhaseTable&&<>
+            <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+            <div style={{minWidth:660}}>
             <div style={{display:"flex",alignItems:"flex-end",gap:10,paddingBottom:2,marginBottom:2}}>
               <div style={{width:COL_SWATCH,flexShrink:0}}/><div style={{...thStyle,width:COL_PHASE,flexShrink:0}}>Phase</div>
               <div style={{...thStyle,width:COL_DATES,flexShrink:0}}>Start → End</div><div style={{...thStyle,flexGrow:1}}/>
@@ -1141,6 +1176,7 @@ function App(){
               <span style={{fontSize:16,color:t.textDim,fontWeight:200,width:COL_SEP,flexShrink:0,textAlign:"center"}}>/</span>
               <div style={{width:COL_PCT,flexShrink:0}}><span style={{fontSize:13,color:t.textDim,padding:"5px 0"}}>—</span></div>
             </div>
+            </div></div>
             </>}
           </div>
 
@@ -1158,60 +1194,65 @@ function App(){
 
 // ── ControlsBar ───────────────────────────────────────────────────────────────
 function ControlsBar({t,isDark,box,btn,inpS,mode,toggleFixed,startDate,handleStartDate,
-  sopDate,handleSopDate,gran,setGran,actYrBtn,setDurDays,devDays}){
+  sopDate,handleSopDate,gran,setGran,actYrBtn,setDurDays,devDays,mob}){
   const fixStart=mode==="forward"||mode==="both";
   const fixSOP=mode==="backward"||mode==="both";
   return(
-    <div style={{...box,padding:"16px 20px"}}>
+    <div style={{...box,padding:mob?"12px 14px":"16px 20px",marginTop:mob?14:undefined}}>
       <div style={{fontSize:13,color:t.textMuted,fontWeight:700,marginBottom:10,textTransform:"uppercase",letterSpacing:0.4}}>Setup</div>
-    <div style={{display:"flex",flexWrap:"wrap",gap:"10px 20px",alignItems:"flex-end"}}>
-      <div>
+    <div style={{display:"flex",flexWrap:"wrap",gap:mob?"8px 12px":"10px 20px",alignItems:"flex-end"}}>
+      <div style={mob?{width:"100%"}:{}}>
         <div style={{fontSize:12,color:t.textMuted,marginBottom:4,fontWeight:600}}>Scheduling Mode <span style={{fontWeight:400}}>(Select One or Both)</span></div>
         <div style={{display:"flex",gap:6}}>
           {[{which:"start",lbl:fixStart?"Fixed Start":"Floating Start",active:fixStart},{which:"sop",lbl:fixSOP?"Fixed SOP":"Floating SOP",active:fixSOP}].map(item=>(
             <button key={item.which} onClick={()=>toggleFixed(item.which)}
               style={{padding:"5px 12px",borderRadius:5,border:"1px solid "+(item.active?t.btnAct:t.border),cursor:"pointer",fontSize:13,fontWeight:700,
                 background:item.active?t.btnAct:t.btnBg,color:item.active?"#fff":t.btnText,transition:"all 0.15s",
-                minWidth:116,textAlign:"center"}}>
+                flex:mob?1:undefined,minWidth:mob?undefined:116,textAlign:"center"}}>
               {item.lbl}
             </button>
           ))}
         </div>
       </div>
-      <div>
+      <div style={mob?{width:"calc(50% - 6px)"}:{}}>
         <div style={{fontSize:12,marginBottom:4,fontWeight:600,color:fixStart?"#3a7ad0":t.textMuted}}>
           Start Date <span style={{visibility:fixStart?"visible":"hidden"}}>⚓</span>
         </div>
-        <input type="date" value={toInp(startDate)} onChange={e=>handleStartDate(e.target.value)} style={inpS(!fixStart)}/>
+        <input type="date" value={toInp(startDate)} onChange={e=>handleStartDate(e.target.value)} style={{...inpS(!fixStart),width:mob?"100%":undefined}}/>
       </div>
-      <div>
-        <div style={{fontSize:12,color:t.textMuted,marginBottom:4,fontWeight:600}}>Template Durations</div>
-        <div style={{display:"flex",gap:4}}>
-          {[1,2,3,4,5].map(y=>(
-            <button key={y} onClick={()=>setDurDays(Math.round(365.25*y))} style={btn(actYrBtn===y,true)}>{y}yr</button>
-          ))}
-        </div>
-      </div>
-      <div>
+      <div style={mob?{width:"calc(50% - 6px)"}:{}}>
         <div style={{fontSize:12,marginBottom:4,fontWeight:600,color:fixSOP?"#3a7ad0":t.textMuted}}>
           SOP Date (G6) <span style={{visibility:fixSOP?"visible":"hidden"}}>⚓</span>
         </div>
-        <input type="date" value={toInp(sopDate)} onChange={e=>handleSopDate(e.target.value)} style={inpS(!fixSOP)}/>
+        <input type="date" value={toInp(sopDate)} onChange={e=>handleSopDate(e.target.value)} style={{...inpS(!fixSOP),width:mob?"100%":undefined}}/>
       </div>
-      <div>
-        <div style={{fontSize:12,color:t.textMuted,marginBottom:4,fontWeight:600}}>Timeline Scale</div>
+      <div style={mob?{width:"100%"}:{}}>
+        <div style={{fontSize:12,color:t.textMuted,marginBottom:4,fontWeight:600}}>Template Durations</div>
         <div style={{display:"flex",gap:4}}>
-          {["Monthly","Quarterly","Yearly"].map(g=>(
-            <button key={g} onClick={()=>setGran(g.toLowerCase())} style={btn(gran===g.toLowerCase(),true)}>{g}</button>
+          {[1,2,3,4,5].map(y=>(
+            <button key={y} onClick={()=>setDurDays(Math.round(365.25*y))} style={{...btn(actYrBtn===y,true),flex:mob?1:undefined}}>{y}yr</button>
           ))}
         </div>
       </div>
-      <div style={{marginLeft:"auto",textAlign:"right"}}>
+      <div style={mob?{width:"100%"}:{}}>
+        <div style={{fontSize:12,color:t.textMuted,marginBottom:4,fontWeight:600}}>Timeline Scale</div>
+        <div style={{display:"flex",gap:4}}>
+          {["Monthly","Quarterly","Yearly"].map(g=>(
+            <button key={g} onClick={()=>setGran(g.toLowerCase())} style={{...btn(gran===g.toLowerCase(),true),flex:mob?1:undefined}}>{g}</button>
+          ))}
+        </div>
+      </div>
+      {!mob&&<div style={{marginLeft:"auto",textAlign:"right"}}>
         <div style={{fontSize:11,color:t.textMuted}}>Development</div>
         <div style={{fontSize:16,fontWeight:800}}>{fmtW(devDays/7)}</div>
         <div style={{fontSize:10,color:t.textDim}}>SOP: {fmtD(sopDate)}</div>
-      </div>
+      </div>}
     </div>
+    {mob&&<div style={{marginTop:10,paddingTop:10,borderTop:"1px solid "+t.border,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+      <div style={{fontSize:11,color:t.textMuted}}>Development</div>
+      <div style={{fontSize:15,fontWeight:800}}>{fmtW(devDays/7)}</div>
+      <div style={{fontSize:11,color:t.textDim}}>SOP: {fmtD(sopDate)}</div>
+    </div>}
     </div>
   );
 }
@@ -1225,11 +1266,11 @@ function TimelinePanel({t,isDark,box,timelineRef,rowLbl,ticks,dspDevFrac,dspLaun
   deleteDb,splitDb,deleteTr,deleteTestBar,renameBuildBar,renameTestBar,addBuildBar,addTestBar,
   customTrs,customGates,addCustomTr,addCustomGate,deleteCustomTr,deleteCustomGate,
   renameCustomTr,renameCustomGate,startCustomTrDrag,startCustomGateDrag,
-  completed,toggleComplete,hiddenRows,toggleRow,showTodayLine,toggleTodayLine}){
+  completed,toggleComplete,hiddenRows,toggleRow,showTodayLine,toggleTodayLine,mob}){
   const legendBg=isDark?"rgba(255,255,255,0.03)":"#f0f2f5";
   const[collapsed,setCollapsed]=useState(false);
   return(
-    <div style={{...box,padding:"20px 22px"}}>
+    <div style={{...box,padding:mob?"14px 14px":"20px 22px",minWidth:mob?600:undefined}}>
       <div onClick={()=>setCollapsed(v=>!v)} style={{cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:collapsed?0:10}}>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
           <div style={{fontSize:13,color:t.textMuted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.4}}>Timeline</div>
