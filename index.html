@@ -8,6 +8,7 @@
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <script src="https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📅</text></svg>">
 <style>
 *{box-sizing:border-box}
@@ -20,6 +21,10 @@ body{margin:0;padding:0;background:#edf1f7;font-family:Inter,system-ui,sans-seri
 <div id="root"></div>
 <script type="text/babel" data-presets="react">
 const {useState,useRef,useEffect,useMemo,useCallback}=React;
+
+const SB_URL="https://cmwtfuxyiyhvffrhjkgg.supabase.co";
+const SB_KEY="sb_publishable_jW8ZURE_Ywa64Qr45pUN1Q_qa3Mk_mU";
+const sbClient=supabase.createClient(SB_URL,SB_KEY);
 
 const PHASES=[
   {name:"Conceive",color:"#a93226",desc:"Assess market potential; build product hypothesis"},
@@ -638,6 +643,7 @@ function App(){
   const[showPhaseTable,setShowPhaseTable]=useState(true);
   const[pendingCreate,setPendingCreate]=useState(null);
   const[scenarios,setScenarios]=useState([]);
+  const[scenariosLoading,setScenariosLoading]=useState(true);
   const[scenarioName,setScName]=useState("");
   const[saveError,setSaveError]=useState("");
   const[importError,setImportError]=useState("");
@@ -792,26 +798,33 @@ function App(){
   function renameCustomGate(key,id){pushSnap({...snap,customGates:(snap.customGates||[]).map(b=>b.key===key?{...b,id}:b)});}
   function doReset(){pushSnap({...initSnap});setConfirmReset(false);setPendingCreate(null);}
 
-  // localStorage
-  const LS_KEY="pdp_scenarios";
-  function loadScenarios(){try{const raw=localStorage.getItem(LS_KEY);setScenarios(raw?JSON.parse(raw):[]);}catch{setScenarios([]);}}
+  // Supabase scenario storage
+  function sbRow(r){return{key:r.id,name:r.name,...r.data,created:new Date(r.created_at).getTime(),modified:new Date(r.updated_at||r.created_at).getTime()};}
+  async function loadScenarios(){
+    setScenariosLoading(true);
+    try{const{data,error}=await sbClient.from('scenarios').select('*').order('created_at',{ascending:false});
+      if(error)throw error;
+      setScenarios((data||[]).map(sbRow));
+    }catch(e){setScenarios([]);}
+    finally{setScenariosLoading(false);}
+  }
   useEffect(()=>{loadScenarios();},[]);
-  function saveList(list){localStorage.setItem(LS_KEY,JSON.stringify(list));setScenarios(list);}
 
-  function saveScenario(){
+  async function saveScenario(){
     setSaveError("");const name=scenarioName.trim();
     if(!name){setSaveError("Please enter a name.");return;}
-    const existing=scenarios.find(s=>s.name===name);
-    if(existing){setSaveError("A scenario with that name already exists. Use Overwrite to replace it.");return;}
-    const now=Date.now();
+    if(scenarios.find(s=>s.name===name)){setSaveError("A scenario with that name already exists. Use Overwrite to replace it.");return;}
     const payload={...snap,anchor:toInp(anchor),mode,gran};
-    saveList([...scenarios,{key:"sc:"+now,name,...payload,created:now,modified:now}]);
+    const{data,error}=await sbClient.from('scenarios').insert({name,data:payload}).select().single();
+    if(error){setSaveError("Failed to save. Try again.");return;}
+    setScenarios(prev=>[sbRow(data),...prev]);
     setScName("");
   }
-  function overwriteScenario(key){
-    const now=Date.now();
+  async function overwriteScenario(key){
     const payload={...snap,anchor:toInp(anchor),mode,gran};
-    saveList(scenarios.map(s=>s.key===key?{...s,...payload,modified:now}:s));
+    const{data,error}=await sbClient.from('scenarios').update({data:payload,updated_at:new Date().toISOString()}).eq('id',key).select().single();
+    if(error){setSaveError("Failed to overwrite. Try again.");return;}
+    setScenarios(prev=>prev.map(s=>s.key===key?sbRow(data):s));
   }
   function restoreScenario(sc){
     pushSnap({
@@ -829,10 +842,16 @@ function App(){
     if(sc.mode)setMode(sc.mode);
     if(sc.gran)setGran(sc.gran);
   }
-  function deleteScenario(key){saveList(scenarios.filter(s=>s.key!==key));}
-  function renameScenario(key,newName){
+  async function deleteScenario(key){
+    const{error}=await sbClient.from('scenarios').delete().eq('id',key);
+    if(error){setSaveError("Failed to delete. Try again.");return;}
+    setScenarios(prev=>prev.filter(s=>s.key!==key));
+  }
+  async function renameScenario(key,newName){
     if(scenarios.find(s=>s.name===newName&&s.key!==key)){setSaveError("That name is already taken.");return;}
-    saveList(scenarios.map(s=>s.key===key?{...s,name:newName,modified:Date.now()}:s));
+    const{error}=await sbClient.from('scenarios').update({name:newName,updated_at:new Date().toISOString()}).eq('id',key);
+    if(error){setSaveError("Failed to rename. Try again.");return;}
+    setScenarios(prev=>prev.map(s=>s.key===key?{...s,name:newName,modified:Date.now()}:s));
   }
 
   function handleImportFile(e){
@@ -997,7 +1016,7 @@ function App(){
           {/* Saved scenarios */}
           <div style={{width:"100%",maxWidth:800}}>
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}><div style={{flex:1,height:1,background:t.border}}/><span style={{fontSize:13,color:t.textMuted,whiteSpace:"nowrap"}}>Saved Scenarios</span><div style={{flex:1,height:1,background:t.border}}/></div>
-            <ScenarioTable scenarios={scenarios} loading={false} saveError={saveError} setSaveError={setSaveError}
+            <ScenarioTable scenarios={scenarios} loading={scenariosLoading} saveError={saveError} setSaveError={setSaveError}
               scenarioName={scenarioName} setScenarioName={setScName}
               onSave={saveScenario} onOverwrite={overwriteScenario}
               onRestore={sc=>{restoreScenario(sc);setMode(sc.mode||"forward");}}
@@ -1119,7 +1138,7 @@ function App(){
             </>}
           </div>
 
-          <ScenarioTable scenarios={scenarios} loading={false} saveError={saveError} setSaveError={setSaveError}
+          <ScenarioTable scenarios={scenarios} loading={scenariosLoading} saveError={saveError} setSaveError={setSaveError}
             scenarioName={scenarioName} setScenarioName={setScName}
             onSave={saveScenario} onOverwrite={overwriteScenario}
             onRestore={restoreScenario} onDelete={deleteScenario} onRename={renameScenario}
