@@ -24,6 +24,21 @@ const {useState,useRef,useEffect,useMemo,useCallback}=React;
 
 const SB_URL="https://cmwtfuxyiyhvffrhjkgg.supabase.co";
 const SB_KEY="sb_publishable_jW8ZURE_Ywa64Qr45pUN1Q_qa3Mk_mU";
+// ── Supabase Auth RLS (run once in Supabase SQL editor after enabling auth) ────
+// -- Lock down personal scenarios to authenticated users only:
+// DROP POLICY IF EXISTS "public_read" ON scenarios;
+// CREATE POLICY "auth_all" ON scenarios FOR ALL
+//   USING (auth.uid() IS NOT NULL)
+//   WITH CHECK (auth.uid() IS NOT NULL);
+//
+// -- shared_scenarios: public read stays, mutations require auth:
+// DROP POLICY IF EXISTS "public_write" ON shared_scenarios;
+// DROP POLICY IF EXISTS "public_update" ON shared_scenarios;
+// DROP POLICY IF EXISTS "public_delete" ON shared_scenarios;
+// CREATE POLICY "auth_insert" ON shared_scenarios FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+// CREATE POLICY "auth_update" ON shared_scenarios FOR UPDATE USING (auth.uid() IS NOT NULL);
+// CREATE POLICY "auth_delete" ON shared_scenarios FOR DELETE USING (auth.uid() IS NOT NULL);
+// ─────────────────────────────────────────────────────────────────────────────
 // shared_scenarios table SQL (run once in Supabase SQL editor):
 // CREATE TABLE IF NOT EXISTS shared_scenarios (
 //   id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -1248,6 +1263,59 @@ function CompareView({selected,compareAlign,setCompareAlign,hiddenRows,toggleRow
   );
 }
 
+// ── Sign-in screen (shown when no Supabase session) ──────────────────────────
+function SignInScreen({isDark,setDark,t}){
+  const[email,setEmail]=useState("");
+  const[sent,setSent]=useState(false);
+  const[loading,setLoading]=useState(false);
+  const[error,setError]=useState("");
+  async function handleSend(e){
+    e.preventDefault();
+    const addr=email.trim();
+    if(!addr){setError("Enter your email address.");return;}
+    setLoading(true);setError("");
+    const{error:err}=await sbClient.auth.signInWithOtp({email:addr,options:{emailRedirectTo:window.location.href}});
+    setLoading(false);
+    if(err){setError(err.message);return;}
+    setSent(true);
+  }
+  return(
+    <div style={{minHeight:"100vh",background:t.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:"Inter,system-ui,sans-serif",padding:20,boxSizing:"border-box"}}>
+      <div style={{position:"absolute",top:16,right:16,display:"flex",borderRadius:5,overflow:"hidden",border:"1px solid "+t.border}}>
+        {[{v:false,icon:<SunIcon/>,lbl:"Light"},{v:true,icon:<MoonIcon/>,lbl:"Dark"}].map(item=>(
+          <button key={item.lbl} onClick={()=>setDark(item.v)} style={{padding:"5px 11px",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:5,fontSize:13,fontWeight:600,background:isDark===item.v?t.btnAct:t.btnBg,color:isDark===item.v?"#fff":t.btnText,transition:"background 0.15s"}}>{item.icon}{item.lbl}</button>
+        ))}
+      </div>
+      <div style={{width:"100%",maxWidth:400,background:t.cardBg,border:"1px solid "+t.cardBorder,borderRadius:12,padding:"32px 36px",boxShadow:"0 4px 24px rgba(0,0,0,0.10)"}}>
+        <div style={{fontSize:22,fontWeight:800,color:t.text,marginBottom:6,letterSpacing:0.2}}>Project Timeline Tool</div>
+        <div style={{fontSize:13,color:t.textMuted,marginBottom:28,lineHeight:1.6}}>Sign in with your email to access your saved scenarios. No password needed — we'll send a magic link.</div>
+        {sent?(
+          <div style={{textAlign:"center",padding:"20px 0"}}>
+            <div style={{fontSize:36,marginBottom:12}}>📬</div>
+            <div style={{fontSize:15,fontWeight:700,color:t.text,marginBottom:8}}>Check your inbox</div>
+            <div style={{fontSize:13,color:t.textMuted,lineHeight:1.6}}>We sent a sign-in link to <strong style={{color:t.text}}>{email}</strong>.<br/>Click it to continue.</div>
+            <button onClick={()=>{setSent(false);setEmail("");}} style={{marginTop:16,fontSize:12,color:t.textDim,background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>Use a different email</button>
+          </div>
+        ):(
+          <form onSubmit={handleSend}>
+            <div style={{marginBottom:16}}>
+              <label style={{display:"block",fontSize:12,fontWeight:600,color:t.textMuted,marginBottom:6,letterSpacing:0.2}}>Email address</label>
+              <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com"
+                autoFocus
+                style={{width:"100%",padding:"9px 12px",borderRadius:6,border:"1px solid "+t.border,fontSize:14,background:t.inBg,color:t.inText,outline:"none",boxSizing:"border-box",colorScheme:isDark?"dark":"light"}}/>
+            </div>
+            {error&&<div style={{fontSize:12,color:t.dangerText,marginBottom:12,background:isDark?t.dangerBg:"#fff4f4",padding:"6px 10px",borderRadius:4}}>{error}</div>}
+            <button type="submit" disabled={loading}
+              style={{width:"100%",padding:"10px",borderRadius:6,border:"none",cursor:loading?"wait":"pointer",fontSize:14,fontWeight:700,background:"#3b82f6",color:"#fff",opacity:loading?0.7:1,transition:"opacity 0.15s"}}>
+              {loading?"Sending…":"Send magic link"}
+            </button>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Error Boundary ────────────────────────────────────────────────────────────
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = {error: null}; }
@@ -1334,7 +1402,8 @@ function App(){
   const[scenarioName,setScName]=useState("");
   const[saveError,setSaveError]=useState("");
   const[loadedScenarioKey,setLoadedScenarioKey]=useState(null);
-  const[currentUser,setCurrentUser]=useState(()=>localStorage.getItem('tlUserName')||"");
+  const[session,setSession]=useState(null);
+  const[authLoading,setAuthLoading]=useState(true);
   const[sharedScenarios,setSharedScenarios]=useState([]);
   const[sharedLoading,setSharedLoading]=useState(true);
   const[shareError,setShareError]=useState("");
@@ -1342,8 +1411,6 @@ function App(){
   const[compareView,setCompareView]=useState(false);
   const[compareAlign,setCompareAlign]=useState("date");
   const[compareHiddenRows,setCompareHiddenRows]=useState({gates:true,reviews:true,builds:true,testing:true});
-  const[userNameEditing,setUserNameEditing]=useState(false);
-  const[userNameDraft,setUserNameDraft]=useState(()=>localStorage.getItem('tlUserName')||"");
   function toggleCompare(key){setCompareIds(prev=>{const next=new Set(prev);if(next.has(key))next.delete(key);else if(next.size<5)next.add(key);return next;});}
   const compareSelected=useMemo(()=>{
     const all=[...scenarios.map(s=>({...s,source:"saved"})),...sharedScenarios.map(s=>({...s,source:"published"}))];
@@ -1351,6 +1418,13 @@ function App(){
   },[compareIds,scenarios,sharedScenarios]);
   const myPublishedKeys=useMemo(()=>new Set(sharedScenarios.filter(s=>s.owner===currentUser).map(s=>s.key)),[sharedScenarios,currentUser]);
   function toggleCompareRow(key){setCompareHiddenRows(h=>({...h,[key]:!h[key]}));}
+  // ── Supabase Auth ─────────────────────────────────────────────────────────
+  useEffect(()=>{
+    sbClient.auth.getSession().then(({data:{session}})=>{setSession(session);setAuthLoading(false);});
+    const{data:{subscription}}=sbClient.auth.onAuthStateChange((_event,session)=>{setSession(session);setAuthLoading(false);});
+    return()=>subscription.unsubscribe();
+  },[]);
+  const currentUser=session?.user?.email||"";
   const[importError,setImportError]=useState("");
   const[importSuccess,setImportSuccess]=useState("");
   const[showBug,setShowBug]=useState(false);
@@ -1730,9 +1804,19 @@ function App(){
             <button key={item.lbl} onClick={()=>setDark(item.v)} style={{padding:"5px 11px",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:5,fontSize:13,fontWeight:600,background:isDark===item.v?t.btnAct:t.btnBg,color:isDark===item.v?"#fff":t.btnText,transition:"background 0.15s"}}>{item.icon}{!mob&&item.lbl}</button>
           ))}
         </div>
+        <button onClick={()=>sbClient.auth.signOut()} title={"Signed in as "+currentUser}
+          style={{padding:"5px 10px",borderRadius:5,border:"1px solid "+t.border,cursor:"pointer",fontSize:12,fontWeight:600,background:t.btnBg,color:t.textMuted,display:"flex",alignItems:"center",gap:5,flexShrink:0,transition:"background 0.15s"}}
+          onMouseEnter={e=>{e.currentTarget.style.background=isDark?"#2a1a1a":"#fff4f4";e.currentTarget.style.color=t.dangerText;}}
+          onMouseLeave={e=>{e.currentTarget.style.background=t.btnBg;e.currentTarget.style.color=t.textMuted;}}>
+          {!mob&&<span style={{maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{currentUser.split("@")[0]}</span>}
+          <span title="Sign out">⎋</span>
+        </button>
       </div>
     </div>
   );
+
+  if(authLoading)return null;
+  if(!session)return<SignInScreen isDark={isDark} setDark={setDark} t={t}/>;
 
   return(
     <div className="theme-fade" style={{background:t.bg,color:t.text,fontFamily:"Inter,system-ui,sans-serif",minHeight:"100vh",padding:mob?"0 10px 8px":"0 16px 16px",userSelect:"none",boxSizing:"border-box"}}>
@@ -1779,24 +1863,25 @@ function App(){
               <div style={{fontSize:18,fontWeight:700,color:t.text,marginBottom:6}}>How would you like to schedule this program?</div>
               <div style={{fontSize:14,color:t.textMuted}}>Choose a direction, import a CSV, or load a saved scenario below.</div>
             </div>
-            <div style={{display:"flex",gap:14,flexWrap:"wrap",justifyContent:"center"}}>
-              {[{m:"forward",arrow:"⚓",title:"Fixed Start",sub:"Pin a start date,\nSOP floats with duration",a:defaultStartDate},{m:"backward",arrow:"⚓",title:"Fixed SOP",sub:"Pin a target SOP date,\nstart date floats with duration",a:defaultSop},{m:"both",arrow:"📌 📌",title:"Fix Both",sub:"Fix start AND SOP;\nphase durations adjust",a:defaultStartDate}].map(item=>(
-                <button key={item.m} onClick={()=>{setMode(item.m);setAnchor(item.a);}}
-                  style={{background:t.cardBg,border:"2px solid "+t.cardBorder,borderRadius:10,padding:mob?"16px 20px":"22px 30px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:10,minWidth:mob?undefined:190,width:mob?"100%":undefined,transition:"border-color 0.15s,background 0.15s"}}
+            <div style={{display:"flex",gap:14,flexWrap:"wrap",justifyContent:"center",alignItems:"stretch"}}>
+              {[{m:"forward",arrow:"📌 ➡️",title:"Fixed Start",sub:"Specify the start date;\nStart of Production floats",a:defaultStartDate},{m:"backward",arrow:"📌 🎯",title:"Fixed SOP",sub:"Specify Start of Production;\nstart date floats",a:defaultSop},{m:"both",arrow:"📌 📌",title:"Fix Both",sub:"Fix start AND SOP;\nphase durations adjust",a:defaultStartDate}].map(item=>(
+                <button key={item.m} onClick={()=>{setMode(item.m);setAnchor(item.a);setCompareView(false);setLoadedScenarioKey(null);}}
+                  style={{background:t.cardBg,border:"1px solid "+t.cardBorder,borderRadius:10,padding:mob?"12px 14px":"12px 10px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:6,flex:mob?undefined:1,width:mob?"100%":undefined,transition:"border-color 0.15s,background 0.15s"}}
                   onMouseEnter={e=>{e.currentTarget.style.borderColor="#1e60a5";e.currentTarget.style.background=t.cardHov;}}
                   onMouseLeave={e=>{e.currentTarget.style.borderColor=t.cardBorder;e.currentTarget.style.background=t.cardBg;}}>
-                  <div style={{fontSize:34,color:"#3a7ad0",lineHeight:1}}>{item.arrow}</div>
-                  <div style={{fontSize:16,fontWeight:700,color:t.text}}>{item.title}</div>
-                  <div style={{fontSize:13,color:t.textMuted,textAlign:"center",lineHeight:1.6,whiteSpace:"pre-line"}}>{item.sub}</div>
+                  <div style={{fontSize:26,color:"#3a7ad0",lineHeight:1}}>{item.arrow}</div>
+                  <div style={{fontSize:15,fontWeight:700,color:t.text}}>{item.title}</div>
+                  <div style={{fontSize:12,color:t.textMuted,textAlign:"center",lineHeight:1.5,whiteSpace:"pre-line"}}>{item.sub}</div>
                 </button>
               ))}
+              {!mob&&<div style={{width:1,background:t.border,alignSelf:"stretch",margin:"0 4px"}}/>}
               <button onClick={()=>importInputRef.current?.click()}
-                style={{background:t.cardBg,border:"2px solid "+t.cardBorder,borderRadius:10,padding:mob?"16px 20px":"22px 30px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:10,minWidth:mob?undefined:190,width:mob?"100%":undefined,transition:"border-color 0.15s,background 0.15s"}}
+                style={{background:t.cardBg,border:"1px solid "+t.cardBorder,borderRadius:10,padding:mob?"12px 14px":"12px 10px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:6,flex:mob?undefined:1,width:mob?"100%":undefined,transition:"border-color 0.15s,background 0.15s"}}
                 onMouseEnter={e=>{e.currentTarget.style.borderColor="#1e60a5";e.currentTarget.style.background=t.cardHov;}}
                 onMouseLeave={e=>{e.currentTarget.style.borderColor=t.cardBorder;e.currentTarget.style.background=t.cardBg;}}>
-                <div style={{fontSize:34,color:"#3a7ad0",lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}><UploadIcon sz={34} c="#3a7ad0"/></div>
-                <div style={{fontSize:16,fontWeight:700,color:t.text}}>Import CSV</div>
-                <div style={{fontSize:13,color:t.textMuted,textAlign:"center",lineHeight:1.6}}>Load a previously exported timeline CSV</div>
+                <div style={{fontSize:26,color:"#3a7ad0",lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}><UploadIcon sz={26} c="#3a7ad0"/></div>
+                <div style={{fontSize:15,fontWeight:700,color:t.text}}>Import CSV</div>
+                <div style={{fontSize:12,color:t.textMuted,textAlign:"center",lineHeight:1.5}}>Load a previously exported timeline CSV</div>
               </button>
             </div>
             {importError&&<div style={{marginTop:14,fontSize:13,color:t.dangerText,background:isDark?t.dangerBg:"#fff4f4",border:"1px solid "+t.dangerText,borderRadius:6,padding:"8px 14px",textAlign:"center"}}>{importError}</div>}
@@ -1825,24 +1910,7 @@ function App(){
                 </button>
               </div>
             )}
-            {/* Display name (used for publishing) */}
-            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,fontSize:12,color:t.textDim}}>
-              <span style={{fontWeight:600}}>Your display name:</span>
-              {userNameEditing?(
-                <form onSubmit={e=>{e.preventDefault();const v=userNameDraft.trim();localStorage.setItem('tlUserName',v);setCurrentUser(v);setUserNameEditing(false);}} style={{display:"flex",gap:5,alignItems:"center"}}>
-                  <input autoFocus value={userNameDraft} onChange={e=>setUserNameDraft(e.target.value)} placeholder="e.g. your name"
-                    style={{padding:"2px 7px",borderRadius:3,border:"1px solid "+t.border,fontSize:12,background:t.inBg,color:t.inText,outline:"none",width:140}}/>
-                  <button type="submit" style={{padding:"2px 8px",borderRadius:3,border:"1px solid "+t.border,cursor:"pointer",fontSize:11,fontWeight:700,background:t.btnAct,color:"#fff"}}>Save</button>
-                  <button type="button" onClick={()=>{setUserNameDraft(currentUser);setUserNameEditing(false);}} style={{padding:"2px 8px",borderRadius:3,border:"1px solid "+t.border,cursor:"pointer",fontSize:11,background:t.btnBg,color:t.btnText}}>Cancel</button>
-                </form>
-              ):(
-                <span style={{display:"flex",alignItems:"center",gap:5}}>
-                  <span style={{color:currentUser?t.text:t.textDim,fontStyle:currentUser?"normal":"italic"}}>{currentUser||"(not set)"}</span>
-                  <button onClick={()=>{setUserNameDraft(currentUser);setUserNameEditing(true);}} title="Edit display name" style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:t.textDim,padding:"0 2px"}}>✏️</button>
-                </span>
-              )}
-              {shareError&&<span style={{fontSize:11,color:t.dangerText,marginLeft:8}}>{shareError}</span>}
-            </div>
+            {shareError&&<div style={{fontSize:12,color:t.dangerText,marginBottom:10,background:isDark?t.dangerBg:"#fff4f4",padding:"6px 12px",borderRadius:5,border:"1px solid "+t.dangerText}}>{shareError}</div>}
             <ScenarioTable scenarios={scenarios} loading={scenariosLoading} saveError={saveError} setSaveError={setSaveError}
               scenarioName={scenarioName} setScenarioName={setScName}
               onSave={saveScenario} onOverwrite={overwriteScenario} onRefresh={loadScenarios}
