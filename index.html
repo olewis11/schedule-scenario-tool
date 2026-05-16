@@ -24,6 +24,20 @@ const {useState,useRef,useEffect,useMemo,useCallback}=React;
 
 const SB_URL="https://cmwtfuxyiyhvffrhjkgg.supabase.co";
 const SB_KEY="sb_publishable_jW8ZURE_Ywa64Qr45pUN1Q_qa3Mk_mU";
+// shared_scenarios table SQL (run once in Supabase SQL editor):
+// CREATE TABLE IF NOT EXISTS shared_scenarios (
+//   id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+//   scenario_key text NOT NULL,
+//   name text NOT NULL,
+//   owner text NOT NULL,
+//   data jsonb NOT NULL,
+//   published_at timestamptz DEFAULT now()
+// );
+// ALTER TABLE shared_scenarios ENABLE ROW LEVEL SECURITY;
+// CREATE POLICY "public_read" ON shared_scenarios FOR SELECT USING (true);
+// CREATE POLICY "public_write" ON shared_scenarios FOR INSERT WITH CHECK (true);
+// CREATE POLICY "public_update" ON shared_scenarios FOR UPDATE USING (true);
+// CREATE POLICY "public_delete" ON shared_scenarios FOR DELETE USING (true);
 const sbClient=supabase.createClient(SB_URL,SB_KEY);
 
 const PHASES=[
@@ -39,6 +53,8 @@ const PROD_PHASES=[{id:7,name:"Launch",color:"#1a5276"},{id:8,name:"Sustain",col
 const DEFAULT_PCTS=[0.06,0.09,0.12,0.20,0.23,0.20,0.10];
 const DEFAULT_LAUNCH_WK=52,DEFAULT_SUSTAIN_WK=78,POST_SOP_DISPLAY=91;
 const GATE_COLOR="#f5c800",TR_COLOR="#1a6fba",BUILD_BAR_H=40,MAX_HISTORY=30;
+const COMPARE_ACCENTS=["#3b82f6","#f59e0b","#10b981","#a855f7","#ef4444"];
+const PROD_PHASE_DESC={7:"LRIP, GA, scale production ramp.",8:"Full-rate production."};
 const GATE_DESC=["Conceive phase exit","Define phase exit","Plan phase exit","Design phase exit","Refine phase exit","Verify phase exit · Model Fix","Qualify phase exit · Start of Production","Launch phase exit"];
 const DEFAULT_TR=[
   {id:"SCR", phase:1,pos:0.75,desc:"System Concept Review"},
@@ -502,11 +518,38 @@ function EditCell({value,onCommit,width=90,suffix,t}){
   </div>;
 }
 
+// DateInput — uncontrolled date input that:
+//   • debounces onChange so month-navigation doesn't fire the handler
+//   • uses a ref + editing flag to sync external date changes without remounting (which would close the picker)
+//   • commits immediately on blur as a fallback (manual typing / tab away)
+function DateInput({date,onCommit,style}){
+  const inputRef=useRef(null);
+  const editing=useRef(false);
+  const timer=useRef(null);
+  // Sync external date changes into the DOM without remounting (which would close the picker).
+  // Skipped while the user is actively interacting (editing=true).
+  useEffect(()=>{
+    if(inputRef.current&&!editing.current)inputRef.current.value=toInp(date);
+  },[date]);
+  return<input ref={inputRef} type="date" defaultValue={toInp(date)}
+    onChange={e=>{
+      editing.current=true;
+      const v=e.target.value;
+      clearTimeout(timer.current);
+      // Reset editing after debounce so external changes can sync once the picker is closed.
+      timer.current=setTimeout(()=>{editing.current=false;if(v)onCommit(v);},400);
+    }}
+    onBlur={e=>{
+      // Blur fires when user tabs away or clicks outside — commit immediately and clear debounce.
+      editing.current=false;
+      clearTimeout(timer.current);
+      if(e.target.value)onCommit(e.target.value);
+    }}
+    style={style}/>;
+}
 function DateCell({date,onChange,t,isDark,readOnly}){
   if(readOnly)return<span style={{fontSize:13,color:t.textMuted,width:120,display:"inline-block",padding:"5px 0",flexShrink:0}}>{fmtD(date)}</span>;
-  return<input key={toInp(date)} type="date" defaultValue={toInp(date)}
-    onBlur={e=>{if(e.target.value)onChange(e.target.value);}}
-    onKeyDown={e=>{if(e.key==="Enter")e.target.blur();}}
+  return<DateInput date={date} onCommit={onChange}
     style={{background:t.editBg,border:"1px solid "+t.border,color:t.text,fontSize:13,outline:"none",padding:"5px 8px",borderRadius:4,width:120,textAlign:"left",colorScheme:isDark?"dark":"light",flexShrink:0}}/>;
 }
 
@@ -730,6 +773,481 @@ function ScenarioTable({scenarios,loading,saveError,setSaveError,scenarioName,se
   );
 }
 
+// ── SharedScenarioTable ───────────────────────────────────────────────────────
+function SharedScenarioTable({sharedScenarios,loading,shareError,currentUser,onRestore,onUnpublish,onRefresh,compareIds,onToggleCompare,t,isDark}){
+  const[collapsed,setCollapsed]=useState(false);
+  const[confirmUnpub,setConfirmUnpub]=useState(null);
+  const[search,setSearch]=useState("");
+  const[pageLimit,setPageLimit]=useState(5);
+  function smBtn(danger){return{padding:"3px 10px",borderRadius:4,border:"1px solid "+(danger?t.dangerText:t.border),cursor:"pointer",fontSize:12,fontWeight:600,background:danger?(isDark?t.dangerBg:"#fff4f4"):t.btnBg,color:danger?t.dangerText:t.btnText};}
+  const thS={fontSize:11,color:t.rowLbl,textTransform:"uppercase",letterSpacing:"0.6px",padding:"0 10px 8px 0",textAlign:"left",fontWeight:600,borderBottom:"2px solid "+t.border,whiteSpace:"nowrap"};
+  const tdS={fontSize:13,color:t.textMuted,padding:"7px 10px 7px 0",borderBottom:"1px solid "+t.border,verticalAlign:"middle"};
+  const filteredShared=useMemo(()=>{
+    const q=search.trim().toLowerCase();
+    return q?sharedScenarios.filter(s=>(s.name||"").toLowerCase().includes(q)||(s.owner||"").toLowerCase().includes(q)):sharedScenarios;
+  },[sharedScenarios,search]);
+  const visibleShared=pageLimit?filteredShared.slice(0,pageLimit):filteredShared;
+  return(
+    <div style={{background:t.panel,borderRadius:7,border:"1px solid "+t.border,padding:"16px 20px",marginBottom:12}}>
+      <div onClick={()=>setCollapsed(v=>!v)} style={{cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:collapsed?0:12,gap:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
+          <div style={{fontSize:13,color:t.textMuted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.4,whiteSpace:"nowrap"}}>Published Scenarios</div>
+          {collapsed&&<span style={{fontSize:11,color:t.textDim,fontStyle:"italic"}}>· Click to expand</span>}
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:6}} onClick={e=>e.stopPropagation()}>
+          <div style={{position:"relative",display:"flex",alignItems:"center"}}>
+            <svg style={{position:"absolute",left:7,pointerEvents:"none"}} width={12} height={12} viewBox="0 0 16 16" fill="none"><circle cx={6.5} cy={6.5} r={5} stroke={t.textDim} strokeWidth={1.8}/><line x1={10.5} y1={10.5} x2={14.5} y2={14.5} stroke={t.textDim} strokeWidth={1.8} strokeLinecap="round"/></svg>
+            <input value={search} onChange={e=>{setSearch(e.target.value);setPageLimit(5);}}
+              placeholder="Search…" onClick={e=>e.stopPropagation()}
+              style={{paddingLeft:24,paddingRight:7,paddingTop:4,paddingBottom:4,fontSize:12,borderRadius:4,border:"1px solid "+t.border,background:isDark?"#0e1b2d":"#fff",color:t.inText,outline:"none",width:130}}/>
+          </div>
+          {onRefresh&&<button onClick={e=>{e.stopPropagation();onRefresh();}} title="Refresh shared scenarios" style={{background:"none",border:"none",cursor:"pointer",padding:"2px 4px",display:"flex",alignItems:"center",color:t.textMuted,borderRadius:3}}><svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>}
+          <svg width={14} height={14} viewBox="0 0 14 14" style={{flexShrink:0,transform:collapsed?"rotate(-90deg)":"rotate(0deg)",transition:"transform 0.2s"}} onClick={()=>setCollapsed(v=>!v)}><polyline points="2,5 7,10 12,5" stroke={t.textMuted} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+        </div>
+      </div>
+      {!collapsed&&<>
+      {shareError&&<div style={{fontSize:12,color:t.dangerText,marginBottom:10}}>{shareError}</div>}
+      {loading?<div style={{fontSize:13,color:t.textDim,padding:"10px 0"}}>Loading…</div>
+      :sharedScenarios.length===0?<div style={{fontSize:13,color:t.textDim,padding:"10px 0",fontStyle:"italic"}}>No shared scenarios yet. Use the Publish button on any saved scenario to share it with your team.</div>
+      :(
+        <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
+        <table style={{width:"100%",minWidth:560,borderCollapse:"collapse"}}>
+          <thead><tr>
+            {onToggleCompare&&<th style={{...thS,padding:"0 8px 8px 0",width:20}}/>}
+            <th style={thS}>Name</th>
+            <th style={thS}>Owner</th>
+            <th style={thS}>Published</th>
+            <th style={{...thS,textAlign:"right",paddingRight:0}}>Actions</th>
+          </tr></thead>
+          <tbody>
+            {visibleShared.map(sc=>{
+              const isOwner=currentUser&&sc.owner===currentUser;
+              const isConf=confirmUnpub===sc.key+sc.owner;
+              const isSel=compareIds&&compareIds.has(sc.key);
+              const selDisabled=compareIds&&!isSel&&compareIds.size>=5;
+              return(
+                <tr key={sc.key+sc.owner} style={{background:isConf?(isDark?t.dangerBg:"#fff8f8"):isSel?(isDark?"#0e2035":"#f0f6ff"):"transparent"}}>
+                  {onToggleCompare&&<td style={{...tdS,padding:"7px 8px 7px 0",width:20}}>
+                    <input type="checkbox" checked={!!isSel} disabled={!!selDisabled}
+                      onChange={()=>onToggleCompare(sc.key)}
+                      title={selDisabled?"Max 5 scenarios for comparison":isSel?"Remove from comparison":"Add to comparison"}
+                      style={{margin:0,cursor:selDisabled?"not-allowed":"pointer",accentColor:"#3b82f6",width:14,height:14}}/>
+                  </td>}
+                  <td style={{...tdS,color:t.text,fontWeight:600}}>{sc.name}</td>
+                  <td style={tdS}>
+                    <span title={sc.owner} style={{display:"inline-flex",alignItems:"center",gap:5}}>
+                      <span style={{fontSize:11,background:isDark?"#1a2e48":"#dce8f5",color:t.btnText,borderRadius:3,padding:"1px 6px",fontWeight:700,letterSpacing:0.3}}>{(sc.owner||"").split("@")[0]}</span>
+                      {isOwner&&<span style={{fontSize:10,color:t.textDim,fontStyle:"italic"}}>you</span>}
+                    </span>
+                  </td>
+                  <td style={tdS}>{fmtDT(sc.publishedAt||sc.modified)}</td>
+                  <td style={{...tdS,textAlign:"right",paddingRight:0}}>
+                    {isConf?(<div style={{display:"flex",gap:5,justifyContent:"flex-end",alignItems:"center"}}>
+                      <span style={{fontSize:12,color:t.dangerText,fontWeight:600}}>Unpublish "{sc.name}"?</span>
+                      <button onClick={()=>{onUnpublish(sc);setConfirmUnpub(null);}} style={{padding:"3px 10px",borderRadius:4,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:t.dangerText,color:"#fff"}}>Confirm</button>
+                      <button onClick={()=>setConfirmUnpub(null)} style={smBtn(false)}>Cancel</button>
+                    </div>):(<div style={{display:"flex",gap:5,justifyContent:"flex-end"}}>
+                      <button onClick={()=>onRestore(sc)} style={smBtn(false)}>Load</button>
+                      {isOwner&&<button onClick={()=>setConfirmUnpub(sc.key+sc.owner)} style={smBtn(true)}>Unpublish</button>}
+                    </div>)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        </div>
+      )}
+      {!loading&&filteredShared.length>0&&(
+        <div style={{display:"flex",alignItems:"center",gap:6,marginTop:10,flexWrap:"wrap"}}>
+          <span style={{fontSize:11,color:t.textDim}}>
+            {search.trim()?`${visibleShared.length} of ${filteredShared.length} match${filteredShared.length!==1?"es":""}`:
+              (pageLimit&&filteredShared.length>pageLimit)?`Showing ${visibleShared.length} of ${filteredShared.length}`:null}
+          </span>
+          {[5,10,25,null].map(n=>{
+            if(filteredShared.length<=5&&n!==null)return null;
+            const lbl=n===null?"All":String(n);
+            const active=pageLimit===n;
+            return<button key={lbl} onClick={()=>setPageLimit(n)}
+              style={{padding:"2px 9px",borderRadius:4,border:"1px solid "+(active?t.btnAct:t.border),
+                fontSize:11,fontWeight:active?700:400,cursor:"pointer",
+                background:active?t.btnAct:"transparent",color:active?"#fff":t.textMuted}}>
+              {lbl}
+            </button>;
+          })}
+        </div>
+      )}
+      </>}
+    </div>
+  );
+}
+
+function ReadOnlyPhaseBlock({ph,i,x1,x2,startDate,endDate,pct,devDays,t}){
+  const[hov,setHov]=useState(false);
+  const[hovRect,setHovRect]=useState(null);
+  const elemRef=useRef(null);
+  const timer=useRef(null),showTimer=useRef(null);
+  useEffect(()=>()=>{clearTimeout(timer.current);clearTimeout(showTimer.current);},[]);
+  function enter(){clearTimeout(timer.current);clearTimeout(showTimer.current);showTimer.current=setTimeout(()=>{if(elemRef.current)setHovRect(elemRef.current.getBoundingClientRect());setHov(true);},300);}
+  function leave(){clearTimeout(showTimer.current);timer.current=setTimeout(()=>setHov(false),120);}
+  const pc=v=>(v*100).toFixed(3)+"%";
+  const w=Math.max(0,x2-x1);
+  return(
+    <div ref={elemRef} onMouseEnter={enter} onMouseLeave={leave}
+      style={{position:"absolute",left:pc(x1),width:pc(w),top:0,bottom:0,backgroundColor:ph.color,
+        display:"flex",alignItems:"center",justifyContent:"center",overflow:"visible",
+        borderLeft:i>0?"2px solid rgba(0,0,0,0.15)":"none",zIndex:hov?20:1,cursor:"default"}}>
+      <div style={{textAlign:"center",padding:"0 3px",pointerEvents:"none",position:"relative",zIndex:2}}>
+        <div style={{fontSize:w>0.06?12:9,fontWeight:800,color:"#fff",whiteSpace:"nowrap"}}>Ph{i}</div>
+        {w>0.08&&<div style={{fontSize:9,color:"rgba(255,255,255,0.7)",whiteSpace:"nowrap"}}>{ph.name}</div>}
+      </div>
+      {hov&&<PhaseTooltip phase={ph} idx={i} startDate={startDate} endDate={endDate} pct={pct} devDays={devDays} t={t} completed={false} hasOptions={false} anchorRect={hovRect}/>}
+    </div>
+  );
+}
+
+function ReadOnlyProdBlock({ph,x1,x2,startDate,endDate,durationDays,t}){
+  const[hov,setHov]=useState(false);
+  const[hovRect,setHovRect]=useState(null);
+  const elemRef=useRef(null);
+  const timer=useRef(null),showTimer=useRef(null);
+  useEffect(()=>()=>{clearTimeout(timer.current);clearTimeout(showTimer.current);},[]);
+  function enter(){clearTimeout(timer.current);clearTimeout(showTimer.current);showTimer.current=setTimeout(()=>{if(elemRef.current)setHovRect(elemRef.current.getBoundingClientRect());setHov(true);},300);}
+  function leave(){clearTimeout(showTimer.current);timer.current=setTimeout(()=>setHov(false),120);}
+  const pc=v=>(v*100).toFixed(3)+"%";
+  const w=Math.max(0,x2-x1);
+  const tooltip=hov&&hovRect&&ReactDOM.createPortal(
+    <div style={{position:"fixed",
+      top:window.innerHeight-(hovRect.bottom+8)>120?hovRect.bottom+6:hovRect.top-125,
+      left:Math.max(8,Math.min(hovRect.left+hovRect.width/2-130,window.innerWidth-276)),
+      zIndex:2000,background:t.ttBg,border:"1px solid "+t.ttBorder,borderRadius:7,
+      padding:"10px 13px",pointerEvents:"none",boxShadow:"0 6px 20px rgba(0,0,0,0.28)",width:260}}>
+      <div style={{fontWeight:800,marginBottom:4,fontSize:14,display:"flex",alignItems:"center",gap:7,color:t.text,whiteSpace:"nowrap"}}>
+        <span style={{display:"inline-block",width:10,height:10,backgroundColor:ph.color,borderRadius:2,flexShrink:0}}/>
+        Ph{ph.id}: {ph.name}
+      </div>
+      <div style={{fontSize:12,color:t.textMuted,marginBottom:2,whiteSpace:"nowrap"}}>{fmtD(startDate)} → {fmtD(endDate)}</div>
+      <div style={{fontSize:12,color:t.textMuted,marginBottom:4,whiteSpace:"nowrap"}}>{fmtW(Math.round(durationDays/7))}</div>
+      <div style={{fontSize:12,color:t.textDim,lineHeight:1.5}}>{PROD_PHASE_DESC[ph.id]}</div>
+    </div>,
+    document.body
+  );
+  return(
+    <div ref={elemRef} onMouseEnter={enter} onMouseLeave={leave}
+      style={{position:"absolute",left:pc(x1),width:pc(w),top:0,bottom:0,backgroundColor:ph.color,
+        display:"flex",alignItems:"center",justifyContent:"center",
+        borderLeft:"2px solid rgba(0,0,0,0.2)",overflow:"hidden",cursor:"default",zIndex:hov?20:1}}>
+      <div style={{textAlign:"center",padding:"0 3px",pointerEvents:"none"}}>
+        <div style={{fontSize:w>0.06?12:9,fontWeight:800,color:"#fff",whiteSpace:"nowrap"}}>Ph{ph.id}</div>
+        {w>0.09&&<div style={{fontSize:9,color:"rgba(255,255,255,0.7)",whiteSpace:"nowrap"}}>{ph.name}</div>}
+      </div>
+      {tooltip}
+    </div>
+  );
+}
+
+function CompareStrip({data,ticks,xFrac,sopX,accentColor,compareAlign,todayFrac,showTodayLine,hiddenRows,t,isDark}){
+  const{sc,n,st,devDays,startDate,sopDate,launchDays,postDays,displayEndDate}=data;
+  const launchEndDate=addD(sopDate,launchDays);
+  const trPos=Array.isArray(sc.trPos)?sc.trPos:DEFAULT_TR.map(r=>r.pos);
+  const trVisible=Array.isArray(sc.trVisible)?sc.trVisible:DEFAULT_TR.map(()=>true);
+  const dbList=Array.isArray(sc.dbList)?sc.dbList:[];
+  const testBars=Array.isArray(sc.testBars)?sc.testBars:[];
+  const customTrs=Array.isArray(sc.customTrs)?sc.customTrs:[];
+  const customGates=Array.isArray(sc.customGates)?sc.customGates:[];
+  const completed=sc.completed||{};
+  function devPhaseDate(ph,rel){return addD(startDate,Math.round(devDays*(st[ph]+n[ph]*rel)));}
+  function devPhaseEnd(i){return addD(startDate,Math.round(devDays*(st[i]+n[i])));}
+  function dpp(ph,rel){return xFrac(devPhaseDate(ph,rel));}
+  const pc=v=>(v*100).toFixed(3)+"%";
+  const rl={fontSize:11,color:t.rowLbl,textTransform:"uppercase",letterSpacing:"0.7px",paddingLeft:2,display:"block",marginBottom:2};
+  const launchX=xFrac(launchEndDate);
+  const dispEndX=xFrac(displayEndDate);
+  const showToday=todayFrac!=null&&todayFrac>0.001&&todayFrac<0.999;
+  const planEnd=xFrac(devPhaseEnd(2));
+  const prodItems=[
+    {ph:PROD_PHASES[0],x1:sopX,x2:launchX,startDate:sopDate,endDate:launchEndDate,durationDays:launchDays},
+    {ph:PROD_PHASES[1],x1:launchX,x2:dispEndX,startDate:launchEndDate,endDate:displayEndDate,durationDays:data.sustainDays},
+  ].filter(i=>i.x2>i.x1+0.002);
+  const isPublished=!!sc.source&&sc.source==="published";
+  const barPad=4;
+  return(
+    <div style={{marginBottom:14,borderRadius:7,borderTop:"1px solid "+t.border,borderRight:"1px solid "+t.border,borderBottom:"1px solid "+t.border,borderLeft:"4px solid "+accentColor,overflow:"hidden",background:t.panel}}>
+      {/* Strip header */}
+      <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 14px",background:isDark?"rgba(255,255,255,0.025)":"rgba(0,0,0,0.025)",borderBottom:"1px solid "+t.border}}>
+        <span style={{fontSize:14,fontWeight:800,color:t.text,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sc.name}</span>
+        {isPublished&&<span style={{fontSize:11,background:isDark?"#1a2e48":"#dce8f5",color:t.btnText,borderRadius:3,padding:"1px 7px",fontWeight:700,flexShrink:0}}>📢 {(sc.owner||"").split("@")[0]}</span>}
+        <span style={{fontSize:11,background:isDark?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.05)",borderRadius:4,padding:"2px 8px",color:t.textMuted,fontWeight:600,flexShrink:0,whiteSpace:"nowrap"}}>{fmtW(devDays/7)} dev</span>
+        <span style={{fontSize:12,color:t.textMuted,flexShrink:0,whiteSpace:"nowrap"}}>{fmtD(startDate)} → SOP {fmtD(sopDate)}</span>
+      </div>
+      {/* Timeline */}
+      <div style={{position:"relative",width:"100%",background:isDark?t.bg:"#ffffff",padding:"4px 14px 6px",overflow:"hidden"}}>
+        {/* Section bands */}
+        <div style={{position:"relative",height:18,marginBottom:3,overflow:"hidden",fontSize:9,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.5px"}}>
+          <div style={{position:"absolute",left:pc(Math.max(0,xFrac(startDate))),width:pc(Math.max(0,Math.min(1,planEnd)-Math.max(0,xFrac(startDate)))),top:0,bottom:0,display:"flex",alignItems:"center",justifyContent:"center",borderRight:"1px solid "+t.border,borderTop:"2px solid rgba(193,78,40,0.75)",overflow:"hidden",color:"rgba(193,78,40,0.9)"}}>Planning</div>
+          <div style={{position:"absolute",left:pc(Math.max(0,planEnd)),width:pc(Math.max(0,Math.min(1,sopX)-Math.max(0,planEnd))),top:0,bottom:0,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",borderRight:"2px dashed "+t.sop,borderTop:"2px solid rgba(20,143,119,0.8)",color:"rgba(20,143,119,0.95)"}}>Development</div>
+          <div style={{position:"absolute",left:pc(Math.max(0,sopX)),right:0,top:0,bottom:0,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",borderTop:"2px solid rgba(26,82,118,0.7)",color:"rgba(26,82,118,0.9)"}}>Production</div>
+        </div>
+        {/* Ruler */}
+        <div style={{position:"relative",height:44,marginBottom:4}}>
+          {/* Start date label — enlarged + colored when aligning by start */}
+          <div style={{position:"absolute",top:0,left:0,whiteSpace:"nowrap",zIndex:7,
+            fontSize:compareAlign==="start"?13:11,
+            fontWeight:compareAlign==="start"?800:700,
+            color:compareAlign==="start"?"#3b82f6":t.rulerMajTx}}>
+            {compareAlign==="start"&&<span style={{marginRight:3}}>▶</span>}{fmtD(startDate)}
+          </div>
+          <div style={{position:"absolute",top:0,right:0,fontSize:11,color:t.rulerMajTx,fontWeight:700,whiteSpace:"nowrap"}}>{fmtD(displayEndDate)}</div>
+          <div style={{position:"absolute",bottom:0,left:0,right:0,height:1,background:t.rulerLine}}/>
+          {ticks.map((tk,i)=>(
+            <div key={i} style={{position:"absolute",left:pc(tk.x),transform:"translateX(-50%)",bottom:0,display:"flex",flexDirection:"column",alignItems:"center",zIndex:1}}>
+              {tk.label&&<span style={{fontSize:9,color:tk.major?t.rulerMajTx:t.rulerMinTx,whiteSpace:"nowrap",marginBottom:2,fontWeight:tk.major?700:400}}>{tk.label}</span>}
+              <div style={{width:1,height:tk.major?10:5,background:tk.major?t.rulerMajTk:t.rulerMinTk}}/>
+            </div>
+          ))}
+          {/* SOP marker — enlarged + bolder when aligning by SOP */}
+          <div style={{position:"absolute",left:pc(sopX),top:0,bottom:0,zIndex:6,transform:"translateX(-1px)"}}>
+            <span style={{fontSize:compareAlign==="sop"?13:10,color:t.sop,whiteSpace:"nowrap",fontWeight:800,
+              position:"absolute",top:0,left:"50%",transform:"translateX(-50%)",
+              ...(compareAlign==="sop"?{background:t.sop+"22",borderRadius:3,padding:"0 5px",letterSpacing:0.3}:{})}}>SOP</span>
+            <div style={{position:"absolute",bottom:0,width:compareAlign==="sop"?3:2,height:compareAlign==="sop"?22:14,background:t.sop}}/>
+          </div>
+          {/* Start alignment marker — tick at x=0 */}
+          {compareAlign==="start"&&(
+            <div style={{position:"absolute",left:"0%",top:0,bottom:0,zIndex:6}}>
+              <div style={{position:"absolute",bottom:0,width:3,height:22,background:"#3b82f6"}}/>
+            </div>
+          )}
+          {showToday&&showTodayLine&&(
+            <div style={{position:"absolute",left:pc(todayFrac),top:0,bottom:0,zIndex:10,transform:"translateX(-1px)"}}>
+              <span style={{fontSize:10,color:"#e74c3c",whiteSpace:"nowrap",fontWeight:800,position:"absolute",top:0,left:0,transform:"translateX(-50%)"}}>Today</span>
+              <div style={{position:"absolute",bottom:0,width:2,height:12,background:"#e74c3c"}}/>
+            </div>
+          )}
+        </div>
+        {/* Rows */}
+        <div style={{position:"relative"}}>
+          {/* Gridlines */}
+          <div style={{position:"absolute",top:0,left:0,right:0,bottom:0,overflow:"hidden",pointerEvents:"none",zIndex:0}}>
+            {ticks.map((tk,i)=><div key={"gl"+i} style={{position:"absolute",left:pc(tk.x),top:0,bottom:0,width:1,background:t.gridLine}}/>)}
+            {/* SOP gridline — thicker + solid highlight in sop-align mode */}
+            <div style={{position:"absolute",left:pc(sopX),top:0,bottom:0,width:0,
+              borderLeft:(compareAlign==="sop"?"3px solid ":"2px dashed ")+t.sop,
+              zIndex:4,transform:"translateX(-1px)",opacity:compareAlign==="sop"?0.7:1}}/>
+            {/* Start gridline highlight in start-align mode */}
+            {compareAlign==="start"&&<div style={{position:"absolute",left:"0%",top:0,bottom:0,width:3,background:"#3b82f6",opacity:0.35,zIndex:4}}/>}
+            {showToday&&showTodayLine&&<div style={{position:"absolute",left:pc(todayFrac),top:0,bottom:0,width:0,borderLeft:"2px dashed rgba(231,76,60,0.8)",zIndex:46,transform:"translateX(-1px)"}}/>}
+          </div>
+          {/* Phase blocks — with hover tooltips via ReadOnlyPhaseBlock */}
+          <div style={{position:"relative",height:54,overflow:"visible",borderBottom:"1px solid "+t.gridLine}}>
+            {n.map((p,i)=>{
+              const ph=PHASES[i];if(!ph)return null;
+              const x1=xFrac(addD(startDate,Math.round(devDays*st[i]))),x2=xFrac(devPhaseEnd(i));
+              return<ReadOnlyPhaseBlock key={i} ph={ph} i={i} x1={x1} x2={x2}
+                startDate={addD(startDate,Math.round(devDays*st[i]))} endDate={devPhaseEnd(i)}
+                pct={p} devDays={devDays} t={t}/>;
+            })}
+            {prodItems.map(item=>(
+              <ReadOnlyProdBlock key={item.ph.id} ph={item.ph} x1={item.x1} x2={item.x2}
+                startDate={item.startDate} endDate={item.endDate} durationDays={item.durationDays} t={t}/>
+            ))}
+          </div>
+          {/* Gate Reviews */}
+          {!hiddenRows.gates&&<div style={{position:"relative",height:70,marginTop:2,overflow:"visible",borderBottom:"1px solid "+t.gridLine}}>
+            <span style={rl}>Phase Exit Gate Reviews</span>
+            {n.map((_,i)=><Diamond key={i} x={xFrac(devPhaseEnd(i))} label={"G"+i} sub={i===6?"SOP":i===5?"Model Fix":undefined} color={GATE_COLOR} sz={i===6?15:11} tc={t.milTx} sc={t.milSub} date={devPhaseEnd(i)} desc={GATE_DESC[i]} t={t} completed={!!(completed["gate-"+i])}/>)}
+            {customGates.map(g=><Diamond key={"cg"+g.key} x={dpp(g.phase,g.pos)} label={g.id} color={GATE_COLOR} sz={11} tc={t.milTx} sc={t.milSub} date={devPhaseDate(g.phase,g.pos)} t={t}/>)}
+          </div>}
+          {/* Tech Reviews */}
+          {!hiddenRows.reviews&&<div style={{position:"relative",height:70,marginTop:2,overflow:"visible",borderBottom:"1px solid "+t.gridLine}}>
+            <span style={rl}>Program Tech Reviews</span>
+            {DEFAULT_TR.map((tr,i)=>{if(!trVisible[i])return null;return<Diamond key={tr.id} x={dpp(tr.phase,trPos[i])} label={tr.id} color={TR_COLOR} sz={12} tc={t.milTx} sc={t.milSub} date={devPhaseDate(tr.phase,trPos[i])} desc={tr.desc} t={t} completed={!!(completed["tr-"+tr.id])}/>;})            }
+            {customTrs.map(tr=><Diamond key={"ct"+tr.key} x={dpp(tr.phase,tr.pos)} label={tr.id} color={TR_COLOR} sz={12} tc={t.milTx} sc={t.milSub} date={devPhaseDate(tr.phase,tr.pos)} t={t}/>)}
+          </div>}
+          {/* Robot Builds */}
+          {!hiddenRows.builds&&<div style={{position:"relative",height:BUILD_BAR_H+24,marginTop:2,overflow:"visible",borderBottom:"1px solid "+t.gridLine}}>
+            <span style={rl}>Robot Builds</span>
+            {dbList.map(b=>{const x1=dpp(b.phase,b.s),x2=dpp(b.phase,b.e),w=Math.max(0,x2-x1),lbl=b.label||buildLabel(b.family,b.seq,dbList.filter(x=>x.family===b.family).length);
+              return<div key={b.key} style={{position:"absolute",left:pc(x1),width:pc(w),top:barPad,height:BUILD_BAR_H,borderRadius:4,backgroundColor:"#b94a08",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",boxShadow:"inset 0 2px 0 rgba(255,255,255,0.14)"}}>
+                {w>0.025&&<span style={{fontSize:11,fontWeight:700,color:"#fff",whiteSpace:"nowrap",pointerEvents:"none"}}>{lbl}</span>}
+              </div>;
+            })}
+          </div>}
+          {/* Testing */}
+          {!hiddenRows.testing&&<div style={{position:"relative",height:BUILD_BAR_H+24,marginTop:2,overflow:"visible"}}>
+            <span style={rl}>Testing</span>
+            {testBars.map(b=>{const x1=dpp(b.phase,b.s),x2=dpp(b.phase,b.e),w=Math.max(0,x2-x1);
+              return<div key={b.key} style={{position:"absolute",left:pc(x1),width:pc(w),top:barPad,height:BUILD_BAR_H,borderRadius:4,backgroundColor:"#5b6abf",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",boxShadow:"inset 0 2px 0 rgba(255,255,255,0.14)"}}>
+                {w>0.025&&<span style={{fontSize:11,fontWeight:700,color:"#fff",whiteSpace:"nowrap",pointerEvents:"none"}}>{b.id}</span>}
+              </div>;
+            })}
+          </div>}
+        </div>
+        {/* Bottom ruler */}
+        <div style={{position:"relative",height:32,marginTop:2}}>
+          <div style={{position:"absolute",top:0,left:0,right:0,height:1,background:t.rulerLine}}/>
+          {ticks.map((tk,i)=>(
+            <div key={"br"+i} style={{position:"absolute",left:pc(tk.x),transform:"translateX(-50%)",top:0,display:"flex",flexDirection:"column",alignItems:"center"}}>
+              <div style={{width:1,height:tk.major?8:4,background:tk.major?t.rulerMajTk:t.rulerMinTk}}/>
+              {tk.label&&<span style={{fontSize:9,color:tk.major?t.rulerMajTx:t.rulerMinTx,whiteSpace:"nowrap",marginTop:2,fontWeight:tk.major?700:400}}>{tk.label}</span>}
+            </div>
+          ))}
+          <div style={{position:"absolute",left:pc(sopX),top:0,width:2,height:8,background:t.sop,zIndex:4,transform:"translateX(-1px)"}}/>
+          {showToday&&showTodayLine&&<div style={{position:"absolute",left:pc(todayFrac),top:0,width:2,height:8,background:"#e74c3c",zIndex:10,transform:"translateX(-1px)"}}/>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CompareView({selected,compareAlign,setCompareAlign,hiddenRows,toggleRow,todayDate,showTodayLine,toggleTodayLine,t,isDark,onBack,
+  scenarios,scenariosLoading,saveError,setSaveError,scenarioName,setScenarioName,onSave,onOverwrite,onRestore,onDelete,onRename,onDuplicate,onRefresh,onPublish,publishedKeys,
+  sharedScenarios,sharedLoading,shareError,onUnpublish,onRefreshShared,currentUser,
+  compareIds,onToggleCompare,loadedScenarioKey}){
+  const[addOpen,setAddOpen]=useState(false);
+  const[exporting,setExporting]=useState(false);
+  const captureRef=useRef(null);
+  const legendBg=isDark?"rgba(255,255,255,0.03)":"#f0f2f5";
+  async function handleExportPNG(){
+    if(!captureRef.current||exporting)return;
+    setExporting(true);
+    try{
+      const bg=isDark?"#0b1220":"#ffffff";
+      const canvas=await html2canvas(captureRef.current,{backgroundColor:bg,scale:2,useCORS:true,logging:false});
+      const url=padCanvas(canvas,bg).toDataURL("image/png");
+      const a=document.createElement("a");a.href=url;a.download="compare_scenarios.png";a.click();
+    }catch(err){alert("PNG export failed: "+err.message);}
+    finally{setExporting(false);}
+  }
+  const scData=useMemo(()=>selected.map(sc=>{
+    const pcts=Array.isArray(sc.pcts)&&sc.pcts.length===PHASES.length?sc.pcts:[...DEFAULT_PCTS];
+    const n=normP(pcts),st=mkSt(n);
+    const devDays=Math.max(7,Number(sc.durDays)||365);
+    const mode=sc.mode||"forward";
+    const anchor=new Date(sc.anchor);
+    const startDate=mode==="backward"?addD(anchor,-devDays):anchor;
+    const sopDate=addD(startDate,devDays);
+    const launchWeeks=sc.launchWeeks||DEFAULT_LAUNCH_WK;
+    const sustainWeeks=sc.sustainWeeks||DEFAULT_SUSTAIN_WK;
+    const launchDays=launchWeeks*7;
+    const sustainDays=sustainWeeks*7;
+    const postDays=launchDays+sustainDays;
+    const displayEndDate=addD(sopDate,postDays);
+    const displayDays=devDays+postDays;
+    return{sc,n,st,devDays,startDate,sopDate,launchDays,sustainDays,postDays,displayEndDate,displayDays};
+  }),[selected]);
+  const axis=useMemo(()=>{
+    if(!scData.length)return{sharedDuration:365,getXFrac:()=>0,getTickRange:d=>[d.startDate,d.displayEndDate]};
+    if(compareAlign==="date"){
+      const s0=new Date(Math.min(...scData.map(d=>d.startDate.getTime())));
+      const s1=new Date(Math.max(...scData.map(d=>d.displayEndDate.getTime())));
+      const dur=Math.max(1,(s1-s0)/864e5);
+      return{sharedDuration:dur,getXFrac:(date)=>(new Date(date)-s0)/(dur*864e5),getTickRange:()=>[s0,s1]};
+    }
+    if(compareAlign==="start"){
+      const dur=Math.max(1,...scData.map(d=>d.displayDays));
+      const ref=new Date(2024,0,1);
+      const sharedTickRange=[ref,addD(ref,dur)];
+      return{sharedDuration:dur,getXFrac:(date,d)=>(new Date(date)-d.startDate)/(dur*864e5),getTickRange:d=>[d.startDate,addD(d.startDate,dur)],sharedTickRange};
+    }
+    // sop
+    const pre=Math.max(1,...scData.map(d=>d.devDays));
+    const post=Math.max(1,...scData.map(d=>d.postDays));
+    const dur=pre+post;
+    const ref=new Date(2024,0,1);
+    const sharedTickRange=[addD(ref,-pre),addD(ref,post)];
+    return{sharedDuration:dur,getXFrac:(date,d)=>(pre+(new Date(date)-d.sopDate)/864e5)/dur,getTickRange:d=>[addD(d.sopDate,-pre),addD(d.sopDate,post)],sharedTickRange};
+  },[scData,compareAlign]);
+  const gran=axis.sharedDuration<550?"monthly":axis.sharedDuration<1100?"quarterly":"yearly";
+  const todayFrac=useMemo(()=>{
+    if(compareAlign!=="date"||!scData.length)return null;
+    const s0=new Date(Math.min(...scData.map(d=>d.startDate.getTime())));
+    const s1=new Date(Math.max(...scData.map(d=>d.displayEndDate.getTime())));
+    const dur=(s1-s0)/864e5;
+    return dur>0?(todayDate.getTime()-s0.getTime())/(dur*864e5):null;
+  },[compareAlign,scData,todayDate]);
+  const showToday=compareAlign==="date"&&todayFrac!=null&&todayFrac>0.001&&todayFrac<0.999;
+  return(
+    <div style={{paddingBottom:60}}>
+      {/* Header — 3-column flex: [back+title] [legend centered] [alignment toggles] */}
+      <div style={{display:"flex",alignItems:"center",paddingTop:16,marginBottom:18,gap:12}}>
+        <div style={{flex:1,display:"flex",alignItems:"center",gap:12,minWidth:0}}>
+          <button onClick={onBack} style={{padding:"5px 12px",borderRadius:5,border:"1px solid "+t.border,cursor:"pointer",fontSize:13,fontWeight:600,background:t.btnBg,color:t.btnText,display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
+            <span style={{fontSize:16,lineHeight:1,marginTop:-1}}>‹</span> Back
+          </button>
+          <span style={{fontSize:16,fontWeight:800,color:t.text,letterSpacing:0.2,whiteSpace:"nowrap"}}>Compare Scenarios</span>
+        </div>
+        <div style={{position:"relative",border:"1px solid "+t.border,borderRadius:6,padding:"10px 14px 8px",background:legendBg,display:"inline-flex",flexShrink:0}}>
+          <div style={{position:"absolute",top:-9,left:10,padding:"0 5px",background:legendBg,fontSize:10,color:t.textDim,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.6px"}}>Legend · Click to show/hide</div>
+          <div style={{display:"flex",gap:14,flexWrap:"wrap"}}>
+            <LegendItem shape="diamond" color={GATE_COLOR} label="Gate Review" tc={t.textMuted} onClick={()=>toggleRow("gates")} hidden={hiddenRows.gates}/>
+            <LegendItem shape="diamond" color={TR_COLOR} label="Tech Review" tc={t.textMuted} onClick={()=>toggleRow("reviews")} hidden={hiddenRows.reviews}/>
+            <LegendItem shape="bar" color="#b94a08" label="Robot Build" tc={t.textMuted} onClick={()=>toggleRow("builds")} hidden={hiddenRows.builds}/>
+            <LegendItem shape="bar" color="#5b6abf" label="Testing" tc={t.textMuted} onClick={()=>toggleRow("testing")} hidden={hiddenRows.testing}/>
+            {showToday&&<LegendItem shape="bar" color="#e74c3c" label="Today" tc={t.textMuted} onClick={toggleTodayLine} hidden={!showTodayLine}/>}
+          </div>
+        </div>
+        <div style={{flex:1,display:"flex",justifyContent:"flex-end",alignItems:"center",gap:6,flexShrink:0}}>
+          <button onClick={handleExportPNG} disabled={exporting}
+            style={{padding:"5px 11px",borderRadius:5,border:"1px solid "+(isDark?"#1a4a2a":"#a8d5b8"),cursor:exporting?"wait":"pointer",fontSize:12,fontWeight:600,background:isDark?"#0e2a1a":"#e8f5ee",color:isDark?"#4caf80":"#1a7a40",display:"flex",alignItems:"center",gap:5,opacity:exporting?0.6:1,transition:"opacity 0.15s",flexShrink:0}}>
+            <CameraIcon sz={13} c={isDark?"#4caf80":"#1a7a40"}/>{exporting?"Exporting…":"PNG"}
+          </button>
+          <div style={{width:1,height:20,background:t.border,flexShrink:0}}/>
+          {[["date","By Date"],["start","By Start"],["sop","By SOP"]].map(([a,lbl])=>(
+            <button key={a} onClick={()=>setCompareAlign(a)}
+              style={{padding:"5px 14px",borderRadius:5,border:"1px solid "+(compareAlign===a?"#3b82f6":t.border),cursor:"pointer",fontSize:12,fontWeight:compareAlign===a?700:400,background:compareAlign===a?"#3b82f6":t.btnBg,color:compareAlign===a?"#fff":t.btnText,transition:"background 0.15s"}}>
+              {lbl}
+            </button>
+          ))}
+        </div>
+      </div>
+      {/* Strips — wrapped in capture target for PNG export */}
+      <div ref={captureRef} style={{background:isDark?"#0b1220":"#ffffff",padding:"8px 0 4px"}}>
+      {scData.map((d,idx)=>{
+        const tickRange=axis.sharedTickRange||axis.getTickRange(d);
+        const tks=getTicks(tickRange[0],tickRange[1],gran);
+        const xFrac=date=>axis.getXFrac(date,d);
+        const sopX=xFrac(d.sopDate);
+        return<CompareStrip key={d.sc.key} data={d} ticks={tks} xFrac={xFrac} sopX={sopX}
+          accentColor={COMPARE_ACCENTS[idx]} compareAlign={compareAlign}
+          todayFrac={compareAlign==="date"?todayFrac:null}
+          showTodayLine={showTodayLine} hiddenRows={hiddenRows} t={t} isDark={isDark}/>;
+      })}
+      </div>
+      {/* Add More Scenarios */}
+      <div style={{marginTop:28,border:"1px solid "+t.border,borderRadius:10,overflow:"hidden",background:t.cardBg}}>
+        <div onClick={()=>setAddOpen(v=>!v)}
+          style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"11px 18px",cursor:"pointer",userSelect:"none",background:addOpen?(isDark?"rgba(255,255,255,0.04)":"#f5f7fa"):t.cardBg,transition:"background 0.15s"}}
+          onMouseEnter={e=>e.currentTarget.style.background=isDark?"rgba(255,255,255,0.06)":"#eef1f6"}
+          onMouseLeave={e=>e.currentTarget.style.background=addOpen?(isDark?"rgba(255,255,255,0.04)":"#f5f7fa"):t.cardBg}>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <span style={{fontSize:17,lineHeight:1,color:"#3b82f6"}}>＋</span>
+            <span style={{fontSize:13,fontWeight:700,color:t.text}}>Add Scenarios to Comparison</span>
+            {selected.length<5&&<span style={{fontSize:11,color:t.textMuted,fontWeight:400}}>({selected.length}/5 selected)</span>}
+          </div>
+          <span style={{fontSize:13,color:t.textMuted,display:"inline-block",transition:"transform 0.2s",transform:addOpen?"rotate(180deg)":"rotate(0deg)"}}>▾</span>
+        </div>
+        {addOpen&&(
+          <div style={{borderTop:"1px solid "+t.border,padding:"16px 0 0"}}>
+            <ScenarioTable scenarios={scenarios||[]} loading={!!scenariosLoading}
+              saveError={saveError||""} setSaveError={setSaveError||function(){}} scenarioName={scenarioName||""} setScenarioName={setScenarioName||function(){}}
+              onSave={onSave||function(){}} onOverwrite={onOverwrite||function(){}} onRestore={onRestore||function(){}}
+              onDelete={onDelete||function(){}} onRename={onRename||function(){}} onDuplicate={onDuplicate||function(){}}
+              onRefresh={onRefresh||function(){}} onPublish={onPublish||function(){}} publishedKeys={publishedKeys||new Set()}
+              compareIds={compareIds||new Set()} onToggleCompare={onToggleCompare||function(){}} loadedKey={loadedScenarioKey}
+              t={t} isDark={isDark} showSaveForm={false}/>
+            <SharedScenarioTable sharedScenarios={sharedScenarios||[]} loading={!!sharedLoading}
+              shareError={shareError||""} currentUser={currentUser}
+              onRestore={onRestore||function(){}} onUnpublish={onUnpublish||function(){}} onRefresh={onRefreshShared||function(){}}
+              compareIds={compareIds||new Set()} onToggleCompare={onToggleCompare||function(){}}
+              t={t} isDark={isDark}/>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Error Boundary ────────────────────────────────────────────────────────────
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = {error: null}; }
@@ -816,6 +1334,23 @@ function App(){
   const[scenarioName,setScName]=useState("");
   const[saveError,setSaveError]=useState("");
   const[loadedScenarioKey,setLoadedScenarioKey]=useState(null);
+  const[currentUser,setCurrentUser]=useState(()=>localStorage.getItem('tlUserName')||"");
+  const[sharedScenarios,setSharedScenarios]=useState([]);
+  const[sharedLoading,setSharedLoading]=useState(true);
+  const[shareError,setShareError]=useState("");
+  const[compareIds,setCompareIds]=useState(new Set());
+  const[compareView,setCompareView]=useState(false);
+  const[compareAlign,setCompareAlign]=useState("date");
+  const[compareHiddenRows,setCompareHiddenRows]=useState({gates:true,reviews:true,builds:true,testing:true});
+  const[userNameEditing,setUserNameEditing]=useState(false);
+  const[userNameDraft,setUserNameDraft]=useState(()=>localStorage.getItem('tlUserName')||"");
+  function toggleCompare(key){setCompareIds(prev=>{const next=new Set(prev);if(next.has(key))next.delete(key);else if(next.size<5)next.add(key);return next;});}
+  const compareSelected=useMemo(()=>{
+    const all=[...scenarios.map(s=>({...s,source:"saved"})),...sharedScenarios.map(s=>({...s,source:"published"}))];
+    return[...compareIds].map(id=>all.find(s=>s.key===id)).filter(Boolean);
+  },[compareIds,scenarios,sharedScenarios]);
+  const myPublishedKeys=useMemo(()=>new Set(sharedScenarios.filter(s=>s.owner===currentUser).map(s=>s.key)),[sharedScenarios,currentUser]);
+  function toggleCompareRow(key){setCompareHiddenRows(h=>({...h,[key]:!h[key]}));}
   const[importError,setImportError]=useState("");
   const[importSuccess,setImportSuccess]=useState("");
   const[showBug,setShowBug]=useState(false);
@@ -971,6 +1506,7 @@ function App(){
 
   // Supabase scenario storage
   function sbRow(r){return{key:r.id,name:r.name,...r.data,created:new Date(r.created_at).getTime(),modified:new Date(r.updated_at||r.created_at).getTime()};}
+  function sbSharedRow(r){return{key:r.scenario_key,name:r.name,owner:r.owner,publishedAt:r.published_at?new Date(r.published_at).getTime():Date.now(),...r.data,source:"published"};}
   async function loadScenarios(){
     setScenariosLoading(true);
     try{const{data,error}=await sbClient.from('scenarios').select('*').order('created_at',{ascending:false});
@@ -1012,12 +1548,16 @@ function App(){
     });
     setMode(sc.mode||"forward");
     setGran(sc.gran||"quarterly");
-    setLoadedScenarioKey(sc.key);
+    setCompareView(false);
+    const isSaved=sc.source!=="published";
+    setLoadedScenarioKey(isSaved?sc.key:null);
+    if(isSaved)setCompareIds(prev=>{const next=new Set(prev);if(next.size<5)next.add(sc.key);return next;});
   }
   async function deleteScenario(key){
     const{error}=await sbClient.from('scenarios').delete().eq('id',key);
     if(error){setSaveError("Failed to delete. Try again.");return;}
     setScenarios(prev=>prev.filter(s=>s.key!==key));
+    setCompareIds(prev=>{const next=new Set(prev);next.delete(key);return next;});
     setLoadedScenarioKey(prev=>prev===key?null:prev);
   }
   async function duplicateScenario(sc,newName){
@@ -1038,6 +1578,38 @@ function App(){
     setSaveError("");
   }
 
+  // ── Shared scenarios (Supabase shared_scenarios table) ─────────────────────
+  async function loadSharedScenarios(){
+    setSharedLoading(true);
+    try{const{data,error}=await sbClient.from('shared_scenarios').select('*').order('published_at',{ascending:false});
+      if(error)throw error;
+      setSharedScenarios((data||[]).map(sbSharedRow));
+    }catch(e){setSharedScenarios([]);}
+    finally{setSharedLoading(false);}
+  }
+  useEffect(()=>{loadSharedScenarios();},[]);
+  async function publishScenario(sc){
+    if(!currentUser){setShareError("Set a display name first (click ✏️ in the Saved & Published section).");return;}
+    setShareError("");
+    const{key:_k,name,created:_c,modified:_m,source:_s,...dataPayload}=sc;
+    const{data:existing}=await sbClient.from('shared_scenarios').select('id').eq('scenario_key',sc.key).eq('owner',currentUser).maybeSingle();
+    if(existing){
+      const{error}=await sbClient.from('shared_scenarios').update({name,data:dataPayload,published_at:new Date().toISOString()}).eq('id',existing.id);
+      if(error){setShareError("Publish failed. Try again.");return;}
+    }else{
+      const{error}=await sbClient.from('shared_scenarios').insert({scenario_key:sc.key,name,owner:currentUser,data:dataPayload});
+      if(error){setShareError("Publish failed. Try again.");return;}
+    }
+    await loadSharedScenarios();
+  }
+  async function unpublishScenario(sc){
+    if(!currentUser)return;
+    setShareError("");
+    const{error}=await sbClient.from('shared_scenarios').delete().eq('scenario_key',sc.key).eq('owner',currentUser);
+    if(error){setShareError("Unpublish failed. Try again.");return;}
+    await loadSharedScenarios();
+  }
+
   function handleImportFile(e){
     const file=e.target.files?.[0];if(!file)return;
     setImportError("");setImportSuccess("");
@@ -1048,6 +1620,7 @@ function App(){
         if(!result){setImportError("Could not parse CSV.");return;}
         pushSnap(result.snap);setMode(result.mode||"forward");
         if(result.gran)setGran(result.gran);
+        setLoadedScenarioKey(null);
         setImportSuccess("Imported!");setTimeout(()=>setImportSuccess(""),3000);
       }catch(err){setImportError("Import failed: "+err.message);}
     };
@@ -1130,14 +1703,14 @@ function App(){
   const header=(
     <div style={{position:"sticky",top:0,zIndex:200,background:t.bg,display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:mob?8:12,marginLeft:mob?-10:-16,marginRight:mob?-10:-16,paddingLeft:mob?10:16,paddingRight:mob?10:16,paddingTop:mob?8:14,paddingBottom:mob?6:8,marginTop:mob?-8:-14,flexWrap:"wrap",gap:8,boxShadow:"0 1px 0 "+t.border}}>
       <div style={{display:"flex",alignItems:"center",gap:10}}>
-        {mode!=null&&<button onClick={()=>{setMode(null);setPendingCreate(null);}} title="Home" style={{padding:"6px 8px",borderRadius:6,border:"1px solid "+t.border,cursor:"pointer",background:t.btnBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><HouseIcon sz={17} c={t.btnText}/></button>}
+        {mode!=null&&!compareView&&<button onClick={()=>{setMode(null);setPendingCreate(null);setLoadedScenarioKey(null);}} title="Home" style={{padding:"6px 8px",borderRadius:6,border:"1px solid "+t.border,cursor:"pointer",background:t.btnBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><HouseIcon sz={17} c={t.btnText}/></button>}
         <div>
           <div style={{fontSize:mob?15:18,fontWeight:800,letterSpacing:0.3}}>Project Timeline Tool</div>
           {!mob&&<div style={{fontSize:13,color:t.textMuted,marginTop:3,display:"flex",alignItems:"center",gap:5}}>Created by Oliver Lewis + <svg width={14} height={14} viewBox="0 0 248 248" fill="none" style={{display:"inline-block",flexShrink:0}}><path d="M52.4285 162.873L98.7844 136.879L99.5485 134.602L98.7844 133.334H96.4921L88.7237 132.862L62.2346 132.153L39.3113 131.207L17.0249 130.026L11.4214 128.844L6.2 121.873L6.7094 118.447L11.4214 115.257L18.171 115.847L33.0711 116.911L55.485 118.447L71.6586 119.392L95.728 121.873H99.5485L100.058 120.337L98.7844 119.392L97.7656 118.447L74.5877 102.732L49.4995 86.1905L36.3823 76.62L29.3779 71.7757L25.8121 67.2858L24.2839 57.3608L30.6515 50.2716L39.3113 50.8623L41.4763 51.4531L50.2636 58.1879L68.9842 72.7209L93.4357 90.6804L97.0015 93.6343L98.4374 92.6652L98.6571 91.9801L97.0015 89.2625L83.757 65.2772L69.621 40.8192L63.2534 30.6579L61.5978 24.632C60.9565 22.1032 60.579 20.0111 60.579 17.4246L67.8381 7.49965L71.9133 6.19995L81.7193 7.49965L85.7946 11.0443L91.9074 24.9865L101.714 46.8451L116.996 76.62L121.453 85.4816L123.873 93.6343L124.764 96.1155H126.292V94.6976L127.566 77.9197L129.858 57.3608L132.15 30.8942L132.915 23.4505L136.608 14.4708L143.994 9.62643L149.725 12.344L154.437 19.0788L153.8 23.4505L150.998 41.6463L145.522 70.1215L141.957 89.2625H143.994L146.414 86.7813L156.093 74.0206L172.266 53.698L179.398 45.6635L187.803 36.802L193.152 32.5484H203.34L210.726 43.6549L207.415 55.1159L196.972 68.3492L188.312 79.5739L175.896 96.2095L168.191 109.585L168.882 110.689L170.738 110.53L198.755 104.504L213.91 101.787L231.994 98.7149L240.144 102.496L241.036 106.395L237.852 114.311L218.495 119.037L195.826 123.645L162.07 131.592L161.696 131.893L162.137 132.547L177.36 133.925L183.855 134.279H199.774L229.447 136.524L237.215 141.605L241.8 147.867L241.036 152.711L229.065 158.737L213.019 154.956L175.45 145.977L162.587 142.787H160.805V143.85L171.502 154.366L191.242 172.089L215.82 195.011L217.094 200.682L213.91 205.172L210.599 204.699L188.949 188.394L180.544 181.069L161.696 165.118H160.422V166.772L164.752 173.152L187.803 207.771L188.949 218.405L187.294 221.832L181.308 223.959L174.813 222.777L161.187 203.754L147.305 182.486L136.098 163.345L134.745 164.2L128.075 235.42L125.019 239.082L117.887 241.8L111.902 237.31L108.718 229.984L111.902 215.452L115.722 196.547L118.779 181.541L121.58 162.873L123.291 156.636L123.14 156.219L121.773 156.449L107.699 175.752L86.304 204.699L69.3663 222.777L65.291 224.431L58.2867 220.768L58.9235 214.27L62.8713 208.48L86.304 178.705L100.44 160.155L109.551 149.507L109.462 147.967L108.959 147.924L46.6977 188.512L35.6182 189.93L30.7788 185.44L31.4156 178.115L33.7079 175.752L52.4285 162.873Z" fill="#D97757"/></svg></div>}
         </div>
       </div>
       <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
-        {mode!=null&&<>
+        {mode!=null&&!compareView&&<>
           <button onClick={undo} disabled={!canUndo} style={urBtn(canUndo)} title="Undo (Ctrl+Z)"><UndoIcon sz={13} c={canUndo?t.text:t.textDim}/>{!mob&&" Undo"}</button>
           <button onClick={redo} disabled={!canRedo} style={urBtn(canRedo)} title="Redo (Ctrl+Y)">{!mob&&"Redo "}<RedoIcon sz={13} c={canRedo?t.text:t.textDim}/></button>
           {!mob&&<div style={{width:1,height:22,background:t.border,margin:"0 2px"}}/>}
@@ -1170,7 +1743,21 @@ function App(){
         <span style={{fontSize:16}}>📱</span> Rotate to landscape for a better experience
       </div>}
 
-      {mode==null?(
+      {compareView?(
+        <CompareView selected={compareSelected} compareAlign={compareAlign} setCompareAlign={setCompareAlign}
+          hiddenRows={compareHiddenRows} toggleRow={toggleCompareRow}
+          todayDate={todayDate} showTodayLine={showTodayLine} toggleTodayLine={()=>setShowTodayLine(v=>!v)}
+          t={t} isDark={isDark} onBack={()=>setCompareView(false)}
+          scenarios={scenarios} scenariosLoading={scenariosLoading}
+          saveError={saveError} setSaveError={setSaveError} scenarioName={scenarioName} setScenarioName={setScName}
+          onSave={saveScenario} onOverwrite={overwriteScenario} onRestore={restoreScenario}
+          onDelete={deleteScenario} onRename={renameScenario} onDuplicate={duplicateScenario}
+          onRefresh={loadScenarios} onPublish={publishScenario} publishedKeys={myPublishedKeys}
+          sharedScenarios={sharedScenarios} sharedLoading={sharedLoading}
+          shareError={shareError} onUnpublish={unpublishScenario} onRefreshShared={loadSharedScenarios}
+          currentUser={currentUser} compareIds={compareIds} onToggleCompare={toggleCompare}
+          loadedScenarioKey={loadedScenarioKey}/>
+      ):mode==null?(
         <div style={{display:"flex",flexDirection:"column",alignItems:"center",padding:mob?"12px 0":"28px 16px",gap:mob?14:20}}>
           {/* About */}
           <div style={{width:"100%",maxWidth:800,background:t.cardBg,border:"1px solid "+t.cardBorder,borderRadius:10,overflow:"hidden"}}>
@@ -1217,17 +1804,80 @@ function App(){
           </div>
           {/* Saved scenarios */}
           <div style={{width:"100%",maxWidth:800}}>
-            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}><div style={{flex:1,height:1,background:t.border}}/><span style={{fontSize:13,color:t.textMuted,whiteSpace:"nowrap"}}>Saved Scenarios</span><div style={{flex:1,height:1,background:t.border}}/></div>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}><div style={{flex:1,height:1,background:t.border}}/><span style={{fontSize:13,color:t.textMuted,whiteSpace:"nowrap"}}>Saved & Published Scenarios</span><div style={{flex:1,height:1,background:t.border}}/></div>
+            {/* Compare banner */}
+            {compareIds.size>=2&&(
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:isDark?"#0e1e35":"#eef4ff",border:"2px solid #3b82f6",borderRadius:7,padding:"10px 14px",marginBottom:12,gap:12,flexWrap:"wrap"}}>
+                <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",minWidth:0}}>
+                  <button onClick={()=>setCompareIds(new Set())} title="Clear selection"
+                    style={{background:"none",border:"none",cursor:"pointer",fontSize:18,color:t.textMuted,padding:"0 2px",lineHeight:1,flexShrink:0}}>×</button>
+                  <span style={{fontSize:13,color:t.text,fontWeight:600,flexShrink:0}}>{compareIds.size} selected</span>
+                  <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                    {[...compareIds].map((id,i)=>{
+                      const sc=[...scenarios,...sharedScenarios].find(s=>s.key===id);
+                      return sc?<span key={id} style={{fontSize:11,background:COMPARE_ACCENTS[i]+"22",color:COMPARE_ACCENTS[i],border:"1px solid "+COMPARE_ACCENTS[i]+"55",borderRadius:4,padding:"1px 7px",fontWeight:700,maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sc.name}</span>:null;
+                    })}
+                  </div>
+                </div>
+                <button onClick={()=>setCompareView(true)}
+                  style={{padding:"7px 20px",borderRadius:5,border:"none",cursor:"pointer",fontWeight:700,fontSize:13,background:"#3b82f6",color:"#fff",flexShrink:0,display:"flex",alignItems:"center",gap:5}}>
+                  Compare <span style={{fontSize:15,lineHeight:1}}>›</span>
+                </button>
+              </div>
+            )}
+            {/* Display name (used for publishing) */}
+            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,fontSize:12,color:t.textDim}}>
+              <span style={{fontWeight:600}}>Your display name:</span>
+              {userNameEditing?(
+                <form onSubmit={e=>{e.preventDefault();const v=userNameDraft.trim();localStorage.setItem('tlUserName',v);setCurrentUser(v);setUserNameEditing(false);}} style={{display:"flex",gap:5,alignItems:"center"}}>
+                  <input autoFocus value={userNameDraft} onChange={e=>setUserNameDraft(e.target.value)} placeholder="e.g. your name"
+                    style={{padding:"2px 7px",borderRadius:3,border:"1px solid "+t.border,fontSize:12,background:t.inBg,color:t.inText,outline:"none",width:140}}/>
+                  <button type="submit" style={{padding:"2px 8px",borderRadius:3,border:"1px solid "+t.border,cursor:"pointer",fontSize:11,fontWeight:700,background:t.btnAct,color:"#fff"}}>Save</button>
+                  <button type="button" onClick={()=>{setUserNameDraft(currentUser);setUserNameEditing(false);}} style={{padding:"2px 8px",borderRadius:3,border:"1px solid "+t.border,cursor:"pointer",fontSize:11,background:t.btnBg,color:t.btnText}}>Cancel</button>
+                </form>
+              ):(
+                <span style={{display:"flex",alignItems:"center",gap:5}}>
+                  <span style={{color:currentUser?t.text:t.textDim,fontStyle:currentUser?"normal":"italic"}}>{currentUser||"(not set)"}</span>
+                  <button onClick={()=>{setUserNameDraft(currentUser);setUserNameEditing(true);}} title="Edit display name" style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:t.textDim,padding:"0 2px"}}>✏️</button>
+                </span>
+              )}
+              {shareError&&<span style={{fontSize:11,color:t.dangerText,marginLeft:8}}>{shareError}</span>}
+            </div>
             <ScenarioTable scenarios={scenarios} loading={scenariosLoading} saveError={saveError} setSaveError={setSaveError}
               scenarioName={scenarioName} setScenarioName={setScName}
               onSave={saveScenario} onOverwrite={overwriteScenario} onRefresh={loadScenarios}
-              onRestore={sc=>{restoreScenario(sc);setMode(sc.mode||"forward");}}
+              onRestore={restoreScenario}
               onDelete={deleteScenario} onRename={renameScenario} onDuplicate={duplicateScenario}
+              onPublish={publishScenario} publishedKeys={myPublishedKeys}
+              compareIds={compareIds} onToggleCompare={toggleCompare}
               loadedKey={loadedScenarioKey} t={t} isDark={isDark} showSaveForm={false}/>
+            <SharedScenarioTable sharedScenarios={sharedScenarios} loading={sharedLoading} shareError={shareError}
+              currentUser={currentUser} onRestore={restoreScenario} onUnpublish={unpublishScenario}
+              onRefresh={loadSharedScenarios} compareIds={compareIds} onToggleCompare={toggleCompare}
+              t={t} isDark={isDark}/>
           </div>
         </div>
       ):(
         <div>
+          {/* Scenario Details — only shown when editing a saved scenario */}
+          {(()=>{
+            const sc=loadedScenarioKey?scenarios.find(s=>s.key===loadedScenarioKey):null;
+            if(!sc)return null;
+            const author=currentUser||"—";
+            const metaLbl={fontSize:10,color:t.textDim,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.6px",marginBottom:3};
+            const metaVal={fontSize:13,fontWeight:600,color:t.text};
+            return(
+              <div style={{...box,padding:"12px 20px",marginBottom:12}}>
+                <div style={{fontSize:12,color:t.textMuted,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:10}}>Scenario Details</div>
+                <div style={{display:"flex",gap:28,flexWrap:"wrap",alignItems:"flex-start"}}>
+                  <div><div style={metaLbl}>Name</div><div style={{...metaVal,fontSize:14,fontWeight:700}}>{sc.name}</div></div>
+                  <div><div style={metaLbl}>Author</div><div style={metaVal}>{author}</div></div>
+                  <div><div style={metaLbl}>Created</div><div style={metaVal}>{sc.created?fmtDT(sc.created):"—"}</div></div>
+                  <div><div style={metaLbl}>Last Modified</div><div style={metaVal}>{sc.modified?fmtDT(sc.modified):"—"}</div></div>
+                </div>
+              </div>
+            );
+          })()}
           <ControlsBar
             t={t} isDark={isDark} box={box} btn={btn} inpS={inpS} mob={mob}
             mode={mode} toggleFixed={toggleFixed}
@@ -1337,11 +1987,29 @@ function App(){
             </>}
           </div>
 
+          {compareIds.size>=2&&(
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:isDark?"#0e1e35":"#eef4ff",border:"2px solid #3b82f6",borderRadius:7,padding:"10px 14px",marginBottom:12,gap:12,flexWrap:"wrap"}}>
+              <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",minWidth:0}}>
+                <button onClick={()=>setCompareIds(new Set())} title="Clear selection" style={{background:"none",border:"none",cursor:"pointer",fontSize:18,color:t.textMuted,padding:"0 2px",lineHeight:1,flexShrink:0}}>×</button>
+                <span style={{fontSize:13,color:t.text,fontWeight:600,flexShrink:0}}>{compareIds.size} selected</span>
+                <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+                  {[...compareIds].map((id,i)=>{const sc=[...scenarios,...sharedScenarios].find(s=>s.key===id);return sc?<span key={id} style={{fontSize:11,background:COMPARE_ACCENTS[i]+"22",color:COMPARE_ACCENTS[i],border:"1px solid "+COMPARE_ACCENTS[i]+"55",borderRadius:4,padding:"1px 7px",fontWeight:700,maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sc.name}</span>:null;})}
+                </div>
+              </div>
+              <button onClick={()=>setCompareView(true)} style={{padding:"7px 20px",borderRadius:5,border:"none",cursor:"pointer",fontWeight:700,fontSize:13,background:"#3b82f6",color:"#fff",flexShrink:0,display:"flex",alignItems:"center",gap:5}}>Compare <span style={{fontSize:15,lineHeight:1}}>›</span></button>
+            </div>
+          )}
           <ScenarioTable scenarios={scenarios} loading={scenariosLoading} saveError={saveError} setSaveError={setSaveError}
             scenarioName={scenarioName} setScenarioName={setScName}
             onSave={saveScenario} onOverwrite={overwriteScenario} onRefresh={loadScenarios}
             onRestore={restoreScenario} onDelete={deleteScenario} onRename={renameScenario} onDuplicate={duplicateScenario}
+            onPublish={publishScenario} publishedKeys={myPublishedKeys}
+            compareIds={compareIds} onToggleCompare={toggleCompare}
             loadedKey={loadedScenarioKey} t={t} isDark={isDark} showSaveForm={true}/>
+          <SharedScenarioTable sharedScenarios={sharedScenarios} loading={sharedLoading} shareError={shareError}
+            currentUser={currentUser} onRestore={restoreScenario} onUnpublish={unpublishScenario}
+            onRefresh={loadSharedScenarios} compareIds={compareIds} onToggleCompare={toggleCompare}
+            t={t} isDark={isDark}/>
         </div>
       )}
       {pendingCreate&&<CreateDialog pending={pendingCreate} onConfirm={confirmCreate} onCancel={cancelCreate} t={t}/>}
@@ -1361,7 +2029,7 @@ function ControlsBar({t,isDark,box,btn,inpS,mode,toggleFixed,startDate,handleSta
       <div style={mob?{width:"100%"}:{}}>
         <div style={{fontSize:12,color:t.textMuted,marginBottom:4,fontWeight:600}}>Scheduling Mode <span style={{fontWeight:400}}>(Select One or Both)</span></div>
         <div style={{display:"flex",gap:6}}>
-          {[{which:"start",lbl:fixStart?"Fixed Start":"Floating Start",active:fixStart},{which:"sop",lbl:fixSOP?"Fixed SOP":"Floating SOP",active:fixSOP}].map(item=>(
+          {[{which:"start",lbl:(fixStart?"📌 ➡️ Fixed":"➡️ Floating")+" Start",active:fixStart},{which:"sop",lbl:(fixSOP?"📌 🎯 Fixed":"🎯 Floating")+" SOP",active:fixSOP}].map(item=>(
             <button key={item.which} onClick={()=>toggleFixed(item.which)}
               style={{padding:"5px 12px",borderRadius:5,border:"1px solid "+(item.active?t.btnAct:t.border),cursor:"pointer",fontSize:13,fontWeight:700,
                 background:item.active?t.btnAct:t.btnBg,color:item.active?"#fff":t.btnText,transition:"all 0.15s",
@@ -1373,15 +2041,15 @@ function ControlsBar({t,isDark,box,btn,inpS,mode,toggleFixed,startDate,handleSta
       </div>
       <div style={mob?{width:"calc(50% - 6px)"}:{}}>
         <div style={{fontSize:12,marginBottom:4,fontWeight:600,color:fixStart?"#3a7ad0":t.textMuted}}>
-          Start Date <span style={{visibility:fixStart?"visible":"hidden"}}>⚓</span>
+          Start Date <span style={{visibility:fixStart?"visible":"hidden"}}>📌</span>
         </div>
-        <input type="date" value={toInp(startDate)} onChange={e=>handleStartDate(e.target.value)} style={{...inpS(!fixStart),width:mob?"100%":undefined}}/>
+        <DateInput date={startDate} onCommit={handleStartDate} style={{...inpS(!fixStart),width:mob?"100%":undefined}}/>
       </div>
       <div style={mob?{width:"calc(50% - 6px)"}:{}}>
         <div style={{fontSize:12,marginBottom:4,fontWeight:600,color:fixSOP?"#3a7ad0":t.textMuted}}>
-          SOP Date (G6) <span style={{visibility:fixSOP?"visible":"hidden"}}>⚓</span>
+          SOP Date (G6) <span style={{visibility:fixSOP?"visible":"hidden"}}>📌</span>
         </div>
-        <input type="date" value={toInp(sopDate)} onChange={e=>handleSopDate(e.target.value)} style={{...inpS(!fixSOP),width:mob?"100%":undefined}}/>
+        <DateInput date={sopDate} onCommit={handleSopDate} style={{...inpS(!fixSOP),width:mob?"100%":undefined}}/>
       </div>
       <div style={mob?{width:"100%"}:{}}>
         <div style={{fontSize:12,color:t.textMuted,marginBottom:4,fontWeight:600}}>Template Durations</div>
