@@ -187,6 +187,17 @@ function getTicks(start, end, gran) {
 }
 
 const CSV_META="##PDP_META:";
+function padCanvas(src,bg,pad=48){
+  const out=document.createElement('canvas');
+  out.width=src.width+pad*2;
+  out.height=src.height+pad*2;
+  const ctx=out.getContext('2d');
+  ctx.fillStyle=bg;
+  ctx.fillRect(0,0,out.width,out.height);
+  ctx.drawImage(src,pad,pad);
+  return out;
+}
+
 function exportCSVFull(snap,mode,gran,startDate,sopDate,launchEndDate,sustainEndDate,devDays,n,devPhaseStart,devPhaseEnd,devPhaseDate,dbList,trVisible,trPos,launchWeeks,sustainWeeks,testBars){
   const fmt=d=>fmtD(d);
   const meta={snap:{...snap,anchor:toInp(snap.anchor)},mode,gran};
@@ -213,7 +224,7 @@ function importCSV(text,initSnap){
     try{
       const meta=JSON.parse((ff[0]||"").slice(CSV_META.length));
       const s=meta.snap;
-      return{snap:{pcts:Array.isArray(s.pcts)&&s.pcts.length===PHASES.length?s.pcts:[...DEFAULT_PCTS],trPos:s.trPos||DEFAULT_TR.map(r=>r.pos),trVisible:s.trVisible||DEFAULT_TR.map(()=>true),dbList:Array.isArray(s.dbList)?s.dbList:makeDefaultDbList(),testBars:Array.isArray(s.testBars)?s.testBars:null,anchor:frInp(s.anchor),durDays:s.durDays||Math.round(365.25*2),launchWeeks:s.launchWeeks||DEFAULT_LAUNCH_WK,sustainWeeks:s.sustainWeeks||DEFAULT_SUSTAIN_WK,completed:s.completed||{}},mode:meta.mode,gran:meta.gran};
+      return{snap:{pcts:Array.isArray(s.pcts)&&s.pcts.length===PHASES.length?s.pcts:[...DEFAULT_PCTS],trPos:s.trPos||DEFAULT_TR.map(r=>r.pos),trVisible:s.trVisible||DEFAULT_TR.map(()=>true),dbList:Array.isArray(s.dbList)?s.dbList:makeDefaultDbList(),testBars:Array.isArray(s.testBars)?s.testBars:[],anchor:frInp(s.anchor),durDays:s.durDays||Math.round(365.25*2),launchWeeks:s.launchWeeks||DEFAULT_LAUNCH_WK,sustainWeeks:s.sustainWeeks||DEFAULT_SUSTAIN_WK,completed:s.completed||{}},mode:meta.mode,gran:meta.gran};
     }catch{}
   }
   const header=lines[0].replace(/^\uFEFF/,"");
@@ -234,9 +245,11 @@ function importCSV(text,initSnap){
 }
 
 function useUndoable(initial){
-  const[idx,setIdx]=useState(0);const history=useRef([initial]);
+  const[idx,setIdx]=useState(0);
+  const[,setTick]=useState(0);
+  const history=useRef([initial]);
   const current=history.current[idx];
-  const push=useCallback(ns=>{history.current=history.current.slice(0,idx+1);history.current.push(ns);if(history.current.length>MAX_HISTORY+1)history.current.shift();setIdx(history.current.length-1);},[idx]);
+  const push=useCallback(ns=>{history.current=history.current.slice(0,idx+1);history.current.push(ns);if(history.current.length>MAX_HISTORY+1)history.current.shift();setIdx(history.current.length-1);setTick(t=>t+1);},[idx]);
   const undo=useCallback(()=>{if(idx>0)setIdx(i=>i-1);},[idx]);
   const redo=useCallback(()=>{if(idx<history.current.length-1)setIdx(i=>i+1);},[idx]);
   return{current,push,undo,redo,canUndo:idx>0,canRedo:idx<history.current.length-1};
@@ -284,9 +297,15 @@ function BugModal({t,isDark,onClose}){
 }
 
 // Phase hover tooltip
-function PhaseTooltip({phase,idx,startDate,endDate,pct,devDays,t,completed,hasOptions}){
-  return(
-    <div style={{position:"absolute",top:"110%",left:"50%",transform:"translateX(-50%)",background:t.ttBg,border:"1px solid "+t.ttBorder,borderRadius:7,padding:"10px 13px",zIndex:200,pointerEvents:"none",boxShadow:"0 6px 20px rgba(0,0,0,0.28)",width:260}}>
+const TT_W=268;
+function PhaseTooltip({phase,idx,startDate,endDate,pct,devDays,t,completed,hasOptions,anchorRect}){
+  const posStyle=anchorRect?(()=>{
+    const left=Math.max(8,Math.min(anchorRect.left+anchorRect.width/2-TT_W/2,window.innerWidth-TT_W-8));
+    const top=window.innerHeight-(anchorRect.bottom+8)>155?anchorRect.bottom+6:anchorRect.top-160;
+    return{position:"fixed",top,left,zIndex:2000};
+  })():{position:"absolute",top:"110%",left:"50%",transform:"translateX(-50%)",zIndex:200};
+  const content=(
+    <div style={{...posStyle,background:t.ttBg,border:"1px solid "+t.ttBorder,borderRadius:7,padding:"10px 13px",pointerEvents:"none",boxShadow:"0 6px 20px rgba(0,0,0,0.28)",width:TT_W}}>
       <div style={{fontWeight:800,marginBottom:4,fontSize:14,display:"flex",alignItems:"center",gap:7,color:t.text,whiteSpace:"nowrap"}}>
         <span style={{display:"inline-block",width:10,height:10,backgroundColor:phase.color,borderRadius:2,flexShrink:0}}/>
         Ph{idx}: {phase.name}
@@ -297,6 +316,7 @@ function PhaseTooltip({phase,idx,startDate,endDate,pct,devDays,t,completed,hasOp
       {hasOptions&&<div style={{fontSize:10,color:t.textDim,marginTop:6,fontStyle:"italic"}}>Right-click for options</div>}
     </div>
   );
+  return anchorRect?ReactDOM.createPortal(content,document.body):content;
 }
 
 // Diamond
@@ -513,25 +533,87 @@ function CreateDialog({pending,onConfirm,onCancel,t}){
   );
 }
 
-function ScenarioTable({scenarios,loading,saveError,setSaveError,scenarioName,setScenarioName,onSave,onOverwrite,onRestore,onDelete,onRename,onRefresh,t,isDark,showSaveForm}){
+function ScenarioTable({scenarios,loading,saveError,setSaveError,scenarioName,setScenarioName,onSave,onOverwrite,onRestore,onDelete,onRename,onDuplicate,onRefresh,onPublish,publishedKeys,compareIds,onToggleCompare,loadedKey,t,isDark,showSaveForm}){
   const[confirmDel,setConfirmDel]=useState(null);
   const[confirmOver,setConfirmOver]=useState(null);
   const[renaming,setRenaming]=useState(null);
   const[renameVal,setRenameVal]=useState("");
+  const[duplicating,setDuplicating]=useState(null);
+  const[dupVal,setDupVal]=useState("");
+  const[dupError,setDupError]=useState("");
   const[collapsed,setCollapsed]=useState(false);
+  const[menuOpen,setMenuOpen]=useState(null);
+  const[menuPos,setMenuPos]=useState({top:0,right:0});
+  const[sortCol,setSortCol]=useState(null);
+  const[sortDir,setSortDir]=useState("asc");
+  const[search,setSearch]=useState("");
+  const[pageLimit,setPageLimit]=useState(5);
+  const renameInputRef=useRef(null);
+  useEffect(()=>{if(renaming&&renameInputRef.current)renameInputRef.current.select();},[renaming]);
   function smBtn(danger){return{padding:"3px 10px",borderRadius:4,border:"1px solid "+(danger?t.dangerText:t.border),cursor:"pointer",fontSize:12,fontWeight:600,background:danger?(isDark?t.dangerBg:"#fff4f4"):t.btnBg,color:danger?t.dangerText:t.btnText};}
+  function startDup(sc){setDuplicating(sc.key);setDupVal("Copy of "+sc.name);setDupError("");setRenaming(null);setConfirmDel(null);setConfirmOver(null);}
+  function confirmDup(sc){
+    const name=dupVal.trim();
+    if(!name){setDupError("Enter a name.");return;}
+    if(scenarios.find(s=>s.name===name)){setDupError("Name already taken.");return;}
+    onDuplicate(sc,name);setDuplicating(null);setDupVal("");setDupError("");
+  }
+  function openMenu(e,key){
+    e.stopPropagation();
+    const r=e.currentTarget.getBoundingClientRect();
+    setMenuPos({top:r.bottom+4,right:window.innerWidth-r.right});
+    setMenuOpen(menuOpen===key?null:key);
+    setConfirmDel(null);setConfirmOver(null);
+  }
+  function toggleSort(col){
+    if(sortCol===col){if(sortDir==="asc")setSortDir("desc");else{setSortCol(null);setSortDir("asc");}}
+    else{setSortCol(col);setSortDir("asc");}
+  }
+  function sortIcon(col){
+    const active=sortCol===col;
+    return<span style={{marginLeft:3,fontSize:9,opacity:active?1:0.55,fontStyle:"normal"}}>{active?(sortDir==="asc"?"↑":"↓"):"↕"}</span>;
+  }
+  const displayList=useMemo(()=>{
+    const q=search.trim().toLowerCase();
+    const filtered=q?scenarios.filter(s=>(s.name||"").toLowerCase().includes(q)):[...scenarios];
+    if(!sortCol)return filtered;
+    return filtered.sort((a,b)=>{
+      let av,bv;
+      if(sortCol==="name"){av=(a.name||"").toLowerCase();bv=(b.name||"").toLowerCase();}
+      else if(sortCol==="created"){av=a.created;bv=b.created;}
+      else{av=a.modified;bv=b.modified;}
+      return sortDir==="asc"?(av<bv?-1:av>bv?1:0):(av>bv?-1:av<bv?1:0);
+    });
+  },[scenarios,sortCol,sortDir,search]);
+  const visibleList=pageLimit?displayList.slice(0,pageLimit):displayList;
+  const menuSc=scenarios.find(s=>s.key===menuOpen);
+  function menuItem(label,onClick,danger){
+    return(<button key={label} onClick={()=>{onClick();setMenuOpen(null);}}
+      onMouseEnter={e=>e.currentTarget.style.background=isDark?"#1a2e48":"#edf3fa"}
+      onMouseLeave={e=>e.currentTarget.style.background="transparent"}
+      style={{display:"block",width:"100%",textAlign:"left",padding:"8px 14px",border:"none",
+        borderBottom:"1px solid "+t.border,background:"transparent",cursor:"pointer",
+        fontSize:13,color:danger?t.dangerText:t.text,fontWeight:danger?600:400}}>{label}</button>);
+  }
   const thS={fontSize:11,color:t.rowLbl,textTransform:"uppercase",letterSpacing:"0.6px",padding:"0 10px 8px 0",textAlign:"left",fontWeight:600,borderBottom:"2px solid "+t.border,whiteSpace:"nowrap"};
+  const thSrt={...thS,cursor:"pointer",userSelect:"none"};
   const tdS={fontSize:13,color:t.textMuted,padding:"7px 10px 7px 0",borderBottom:"1px solid "+t.border,verticalAlign:"middle"};
   return(
     <div style={{background:t.panel,borderRadius:7,border:"1px solid "+t.border,padding:"16px 20px",marginBottom:12}}>
-      <div onClick={()=>setCollapsed(v=>!v)} style={{cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:collapsed?0:12}}>
-        <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <div style={{fontSize:13,color:t.textMuted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.4}}>Saved Scenarios</div>
+      <div onClick={()=>setCollapsed(v=>!v)} style={{cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:collapsed?0:12,gap:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
+          <div style={{fontSize:13,color:t.textMuted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.4,whiteSpace:"nowrap"}}>Saved Scenarios</div>
           {collapsed&&<span style={{fontSize:11,color:t.textDim,fontStyle:"italic"}}>· Click to expand</span>}
         </div>
-        <div style={{display:"flex",alignItems:"center",gap:8}}>
+        <div style={{display:"flex",alignItems:"center",gap:6}} onClick={e=>e.stopPropagation()}>
+          <div style={{position:"relative",display:"flex",alignItems:"center"}}>
+            <svg style={{position:"absolute",left:7,pointerEvents:"none"}} width={12} height={12} viewBox="0 0 16 16" fill="none"><circle cx={6.5} cy={6.5} r={5} stroke={t.textDim} strokeWidth={1.8}/><line x1={10.5} y1={10.5} x2={14.5} y2={14.5} stroke={t.textDim} strokeWidth={1.8} strokeLinecap="round"/></svg>
+            <input value={search} onChange={e=>{setSearch(e.target.value);setPageLimit(5);}}
+              placeholder="Search…" onClick={e=>e.stopPropagation()}
+              style={{paddingLeft:24,paddingRight:7,paddingTop:4,paddingBottom:4,fontSize:12,borderRadius:4,border:"1px solid "+t.border,background:isDark?"#0e1b2d":"#fff",color:t.inText,outline:"none",width:130}}/>
+          </div>
           {onRefresh&&<button onClick={e=>{e.stopPropagation();onRefresh();}} title="Refresh scenarios" style={{background:"none",border:"none",cursor:"pointer",padding:"2px 4px",display:"flex",alignItems:"center",color:t.textMuted,borderRadius:3}}><svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>}
-          <svg width={14} height={14} viewBox="0 0 14 14" style={{flexShrink:0,transform:collapsed?"rotate(-90deg)":"rotate(0deg)",transition:"transform 0.2s"}}><polyline points="2,5 7,10 12,5" stroke={t.textMuted} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          <svg width={14} height={14} viewBox="0 0 14 14" style={{flexShrink:0,transform:collapsed?"rotate(-90deg)":"rotate(0deg)",transition:"transform 0.2s"}} onClick={()=>setCollapsed(v=>!v)}><polyline points="2,5 7,10 12,5" stroke={t.textMuted} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
         </div>
       </div>
       {!collapsed&&<>
@@ -548,24 +630,45 @@ function ScenarioTable({scenarios,loading,saveError,setSaveError,scenarioName,se
       :scenarios.length===0?<div style={{fontSize:13,color:t.textDim,padding:"10px 0",fontStyle:"italic"}}>No saved scenarios yet. Open a timeline and use the Save Scenario option.</div>
       :(
         <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch"}}>
-        <table style={{width:"100%",minWidth:520,borderCollapse:"collapse"}}>
+        <table style={{width:"100%",minWidth:440,borderCollapse:"collapse"}}>
           <thead><tr>
-            <th style={thS}>Name</th><th style={thS}>Created</th><th style={thS}>Last Modified</th>
+            {onToggleCompare&&<th style={{...thS,padding:"0 8px 8px 0",width:20}}/>}
+            <th style={thSrt} onClick={()=>toggleSort("name")}>Name{sortIcon("name")}</th>
+            <th style={thSrt} onClick={()=>toggleSort("created")}>Created{sortIcon("created")}</th>
+            <th style={thSrt} onClick={()=>toggleSort("modified")}>Last Modified{sortIcon("modified")}</th>
             <th style={{...thS,textAlign:"right",paddingRight:0}}>Actions</th>
           </tr></thead>
           <tbody>
-            {[...scenarios].sort((a,b)=>b.modified-a.modified).map(sc=>{
-              const isConf=confirmDel===sc.key,isOver=confirmOver===sc.key,isRen=renaming===sc.key;
+            {visibleList.map(sc=>{
+              const isConf=confirmDel===sc.key,isOver=confirmOver===sc.key,isRen=renaming===sc.key,isDup=duplicating===sc.key;
+              const isSel=compareIds&&compareIds.has(sc.key);
+              const selDisabled=compareIds&&!isSel&&compareIds.size>=5;
+              const isLoaded=loadedKey&&sc.key===loadedKey;
               return(
-                <tr key={sc.key} style={{background:isConf||isOver?(isDark?t.dangerBg:"#fff8f8"):"transparent"}}>
+                <tr key={sc.key} style={{background:isConf||isOver?(isDark?t.dangerBg:"#fff8f8"):isLoaded?(isDark?"#0e2a18":"#f0fbf4"):isSel?(isDark?"#0e2035":"#f0f6ff"):"transparent"}}>
+                  {onToggleCompare&&<td style={{...tdS,padding:"7px 8px 7px 0",width:20}}>
+                    <input type="checkbox" checked={!!isSel} disabled={!!selDisabled}
+                      onChange={()=>onToggleCompare(sc.key)}
+                      title={selDisabled?"Max 5 scenarios for comparison":isSel?"Remove from comparison":"Add to comparison"}
+                      style={{margin:0,cursor:selDisabled?"not-allowed":"pointer",accentColor:"#3b82f6",width:14,height:14}}/>
+                  </td>}
                   <td style={{...tdS,color:t.text,fontWeight:600}}>
                     {isRen?(<div style={{display:"flex",gap:5,alignItems:"center"}}>
-                      <input value={renameVal} onChange={e=>setRenameVal(e.target.value)}
+                      <input ref={renameInputRef} value={renameVal} onChange={e=>setRenameVal(e.target.value)}
                         onKeyDown={e=>{if(e.key==="Enter"){if(renameVal.trim()){onRename(sc.key,renameVal.trim());setRenaming(null);}}if(e.key==="Escape")setRenaming(null);}}
-                        autoFocus style={{flexGrow:1,background:isDark?"#0e1b2d":"#fff",border:"1px solid "+t.inBorder,color:t.inText,padding:"3px 7px",borderRadius:3,fontSize:13,outline:"none"}}/>
+                        style={{flexGrow:1,background:isDark?"#0e1b2d":"#fff",border:"1px solid "+t.inBorder,color:t.inText,padding:"3px 7px",borderRadius:3,fontSize:13,outline:"none"}}/>
                       <button onClick={()=>{if(renameVal.trim()){onRename(sc.key,renameVal.trim());setRenaming(null);}}} style={{padding:"3px 9px",borderRadius:3,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:t.btnAct,color:"#fff"}}>Save</button>
                       <button onClick={()=>setRenaming(null)} style={smBtn(false)}>Cancel</button>
-                    </div>):sc.name}
+                    </div>):isDup?(<div style={{display:"flex",flexDirection:"column",gap:3}}>
+                      <div style={{display:"flex",gap:5,alignItems:"center"}}>
+                        <input value={dupVal} onChange={e=>{setDupVal(e.target.value);setDupError("");}}
+                          onKeyDown={e=>{if(e.key==="Enter")confirmDup(sc);if(e.key==="Escape"){setDuplicating(null);setDupError("");}}}
+                          autoFocus style={{flexGrow:1,background:isDark?"#0e1b2d":"#fff",border:"1px solid "+(dupError?t.dangerText:t.inBorder),color:t.inText,padding:"3px 7px",borderRadius:3,fontSize:13,outline:"none"}}/>
+                        <button onClick={()=>confirmDup(sc)} style={{padding:"3px 9px",borderRadius:3,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:t.btnAct,color:"#fff",whiteSpace:"nowrap"}}>Duplicate</button>
+                        <button onClick={()=>{setDuplicating(null);setDupError("");}} style={smBtn(false)}>Cancel</button>
+                      </div>
+                      {dupError&&<div style={{fontSize:11,color:t.dangerText}}>{dupError}</div>}
+                    </div>):(<span style={{display:"inline-flex",alignItems:"center",gap:6}}>{sc.name}{isLoaded&&<span style={{fontSize:10,background:isDark?"#0e3320":"#e6f7ee",color:isDark?"#52d68a":"#1a7a40",border:"1px solid "+(isDark?"#1a5c30":"#a8d5b8"),borderRadius:3,padding:"1px 6px",fontWeight:700,letterSpacing:0.2,flexShrink:0}}>✏ Editing</span>}</span>)}
                   </td>
                   <td style={tdS}>{fmtDT(sc.created)}</td>
                   <td style={tdS}>{fmtDT(sc.modified)}</td>
@@ -578,11 +681,11 @@ function ScenarioTable({scenarios,loading,saveError,setSaveError,scenarioName,se
                       <span style={{fontSize:12,color:t.dangerText,fontWeight:600}}>Overwrite "{sc.name}"?</span>
                       <button onClick={()=>{onOverwrite(sc.key);setConfirmOver(null);}} style={{padding:"3px 10px",borderRadius:4,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:t.dangerText,color:"#fff"}}>Confirm</button>
                       <button onClick={()=>setConfirmOver(null)} style={smBtn(false)}>Cancel</button>
-                    </div>):(<div style={{display:"flex",gap:5,justifyContent:"flex-end"}}>
+                    </div>):(<div style={{display:"flex",gap:4,justifyContent:"flex-end",alignItems:"center"}}>
                       <button onClick={()=>onRestore(sc)} style={smBtn(false)}>Load</button>
-                      {showSaveForm&&<button onClick={()=>{setConfirmOver(sc.key);setConfirmDel(null);}} style={smBtn(false)}>Overwrite</button>}
-                      <button onClick={()=>{setRenaming(sc.key);setRenameVal(sc.name);}} style={smBtn(false)}>Rename</button>
-                      <button onClick={()=>{setConfirmDel(sc.key);setConfirmOver(null);}} style={smBtn(true)}>Delete</button>
+                      <button onClick={e=>openMenu(e,sc.key)} title="More actions"
+                        style={{...smBtn(false),padding:"3px 8px",letterSpacing:2,fontWeight:700}}>···</button>
+                      <button onClick={()=>{setConfirmDel(sc.key);setConfirmOver(null);setMenuOpen(null);}} style={smBtn(true)}>Delete</button>
                     </div>)}
                   </td>
                 </tr>
@@ -592,6 +695,36 @@ function ScenarioTable({scenarios,loading,saveError,setSaveError,scenarioName,se
         </table>
         </div>
       )}
+      {!loading&&displayList.length>0&&(
+        <div style={{display:"flex",alignItems:"center",gap:6,marginTop:10,flexWrap:"wrap"}}>
+          <span style={{fontSize:11,color:t.textDim}}>
+            {search.trim()?`${visibleList.length} of ${displayList.length} match${displayList.length!==1?"es":""}`:
+              (pageLimit&&displayList.length>pageLimit)?`Showing ${visibleList.length} of ${displayList.length}`:null}
+          </span>
+          {[5,10,25,null].map(n=>{
+            if(displayList.length<=5&&n!==null)return null;
+            const lbl=n===null?"All":String(n);
+            const active=pageLimit===n;
+            return<button key={lbl} onClick={()=>setPageLimit(n)}
+              style={{padding:"2px 9px",borderRadius:4,border:"1px solid "+(active?t.btnAct:t.border),
+                fontSize:11,fontWeight:active?700:400,cursor:"pointer",
+                background:active?t.btnAct:"transparent",color:active?"#fff":t.textMuted}}>
+              {lbl}
+            </button>;
+          })}
+        </div>
+      )}
+      {menuOpen&&menuSc&&<>
+        <div style={{position:"fixed",inset:0,zIndex:998}} onClick={()=>setMenuOpen(null)}/>
+        <div style={{position:"fixed",top:menuPos.top,right:menuPos.right,zIndex:999,
+          background:t.panel,border:"1px solid "+t.border,borderRadius:7,
+          boxShadow:"0 4px 20px rgba(0,0,0,0.18)",minWidth:160,overflow:"hidden"}}>
+          {showSaveForm&&menuItem("Overwrite with current",()=>{setConfirmOver(menuOpen);},false)}
+          {menuItem("Duplicate",()=>startDup(menuSc),false)}
+          {menuItem("Rename",()=>{setRenaming(menuSc.key);setRenameVal(menuSc.name);setDuplicating(null);},false)}
+          {onPublish&&menuItem(publishedKeys&&publishedKeys.has(menuOpen)?"Re-publish":"Publish",()=>onPublish(menuSc),false)}
+        </div>
+      </>}
       </>}
     </div>
   );
@@ -618,9 +751,10 @@ class ErrorBoundary extends React.Component {
 
 // ── Mobile detection ──────────────────────────────────────────────────────────
 function useIsMobile(bp=640){
-  const mq=window.matchMedia(`(max-width:${bp}px)`);
-  const[mob,setMob]=useState(()=>mq.matches);
+  const[mob,setMob]=useState(()=>window.matchMedia(`(max-width:${bp}px)`).matches);
   useEffect(()=>{
+    const mq=window.matchMedia(`(max-width:${bp}px)`);
+    setMob(mq.matches);
     const fn=(e)=>setMob(e.matches);
     if(mq.addEventListener)mq.addEventListener('change',fn);
     else mq.addListener(fn);
@@ -629,9 +763,10 @@ function useIsMobile(bp=640){
   return mob;
 }
 function useIsPortrait(){
-  const mq=window.matchMedia('(orientation:portrait)');
-  const[portrait,setPortrait]=useState(()=>mq.matches);
+  const[portrait,setPortrait]=useState(()=>window.matchMedia('(orientation:portrait)').matches);
   useEffect(()=>{
+    const mq=window.matchMedia('(orientation:portrait)');
+    setPortrait(mq.matches);
     const fn=(e)=>setPortrait(e.matches);
     if(mq.addEventListener)mq.addEventListener('change',fn);
     else mq.addListener(fn);
@@ -680,9 +815,11 @@ function App(){
   const[scenariosLoading,setScenariosLoading]=useState(true);
   const[scenarioName,setScName]=useState("");
   const[saveError,setSaveError]=useState("");
+  const[loadedScenarioKey,setLoadedScenarioKey]=useState(null);
   const[importError,setImportError]=useState("");
   const[importSuccess,setImportSuccess]=useState("");
   const[showBug,setShowBug]=useState(false);
+  const[aboutOpen,setAboutOpen]=useState(()=>{const s=localStorage.getItem("tlAboutSeen");if(!s){localStorage.setItem("tlAboutSeen","1");return true;}return false;});
   const[todayDate,setTodayDate]=useState(today0);
   const[hiddenRows,setHiddenRows]=useState({gates:false,reviews:false,builds:false,testing:false});
   const[showTodayLine,setShowTodayLine]=useState(true);
@@ -867,25 +1004,38 @@ function App(){
       trVisible:sc.trVisible||DEFAULT_TR.map(()=>true),
       dbList:sc.dbList||makeDefaultDbList(),
       testBars:sc.testBars||initTestBars,
-      anchor:frInp(sc.anchor),
-      durDays:sc.durDays,
+      anchor:sc.anchor?frInp(sc.anchor):defaultStartDate,
+      durDays:sc.durDays||defaultDurDays,
       launchWeeks:sc.launchWeeks||DEFAULT_LAUNCH_WK,
       sustainWeeks:sc.sustainWeeks||DEFAULT_SUSTAIN_WK,
       completed:sc.completed||{},customTrs:sc.customTrs||[],customGates:sc.customGates||[],
     });
-    if(sc.mode)setMode(sc.mode);
-    if(sc.gran)setGran(sc.gran);
+    setMode(sc.mode||"forward");
+    setGran(sc.gran||"quarterly");
+    setLoadedScenarioKey(sc.key);
   }
   async function deleteScenario(key){
     const{error}=await sbClient.from('scenarios').delete().eq('id',key);
     if(error){setSaveError("Failed to delete. Try again.");return;}
     setScenarios(prev=>prev.filter(s=>s.key!==key));
+    setLoadedScenarioKey(prev=>prev===key?null:prev);
+  }
+  async function duplicateScenario(sc,newName){
+    const payload={...sc};
+    delete payload.key; delete payload.name; delete payload.created; delete payload.modified; delete payload.source;
+    try{
+      const{error}=await sbClient.from('scenarios').insert({name:newName,data:payload});
+      if(error)throw error;
+      await loadScenarios();
+    }catch(e){setSaveError("Duplicate failed.");}
   }
   async function renameScenario(key,newName){
+    setSaveError("");
     if(scenarios.find(s=>s.name===newName&&s.key!==key)){setSaveError("That name is already taken.");return;}
     const{error}=await sbClient.from('scenarios').update({name:newName,updated_at:new Date().toISOString()}).eq('id',key);
     if(error){setSaveError("Failed to rename. Try again.");return;}
     setScenarios(prev=>prev.map(s=>s.key===key?{...s,name:newName,modified:Date.now()}:s));
+    setSaveError("");
   }
 
   function handleImportFile(e){
@@ -911,8 +1061,9 @@ function App(){
   async function handleExportPNG(){
     if(!timelineRef.current)return;
     try{
-      const canvas=await html2canvas(timelineRef.current,{backgroundColor:isDark?"#0b1220":"#ffffff",scale:2,useCORS:true,logging:false});
-      const url=canvas.toDataURL("image/png");
+      const bg=isDark?"#0b1220":"#ffffff";
+      const canvas=await html2canvas(timelineRef.current,{backgroundColor:bg,scale:2,useCORS:true,logging:false});
+      const url=padCanvas(canvas,bg).toDataURL("image/png");
       const a=document.createElement("a");a.href=url;a.download="pdp_timeline.png";a.click();
     }catch(err){alert("PNG export failed: "+err.message);}
   }
@@ -964,7 +1115,7 @@ function App(){
       else if(mode==="forward")setMode("both");
     }
   }
-  function handleStartDate(v){const nd=frInp(v);if(mode==="both"){const dur=Math.max(7,dBetw(nd,sopDate));setAnchor(nd);setDurDays(dur);}else if(mode==="forward")setAnchor(nd);else{const dur=dBetw(nd,anchor);if(dur>=7)setDurDays(dur);}}
+  function handleStartDate(v){const nd=frInp(v);if(mode==="both"){ap({anchor:nd,durDays:Math.max(7,dBetw(nd,sopDate))});}else if(mode==="forward")setAnchor(nd);else{const dur=dBetw(nd,anchor);if(dur>=7)setDurDays(dur);}}
   function handleSopDate(v){const nd=frInp(v);if(mode==="backward")setAnchor(nd);else{const dur=dBetw(anchor,nd);if(dur>=7)setDurDays(dur);}}
 
   function btn(act,sm){return{padding:sm?"4px 12px":"5px 14px",borderRadius:4,border:"none",cursor:"pointer",fontWeight:700,fontSize:sm?13:14,background:act?t.btnAct:t.btnBg,color:act?"#fff":t.btnText,transition:"background 0.15s"};}
@@ -1021,14 +1172,28 @@ function App(){
 
       {mode==null?(
         <div style={{display:"flex",flexDirection:"column",alignItems:"center",padding:mob?"12px 0":"28px 16px",gap:mob?14:20}}>
+          {/* About */}
+          <div style={{width:"100%",maxWidth:800,background:t.cardBg,border:"1px solid "+t.cardBorder,borderRadius:10,overflow:"hidden"}}>
+            <div onClick={()=>setAboutOpen(v=>!v)} style={{cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 16px"}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:13,fontWeight:700,color:t.textMuted,textTransform:"uppercase",letterSpacing:0.4}}>About</span>
+                {!aboutOpen&&<span style={{fontSize:11,color:t.textDim,fontStyle:"italic"}}>· Click to expand</span>}
+              </div>
+              <svg width={14} height={14} viewBox="0 0 14 14" style={{flexShrink:0,transform:aboutOpen?"rotate(0deg)":"rotate(-90deg)",transition:"transform 0.2s"}}><polyline points="2,5 7,10 12,5" stroke={t.textMuted} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </div>
+            {aboutOpen&&<div style={{padding:"14px 16px 16px",fontSize:13,color:t.textMuted,lineHeight:1.75}}>
+              This tool is designed for <span style={{color:t.text,fontWeight:600}}>early-stage program planning</span>, where the goal is exploring schedule options quickly rather than managing detailed tasks. Use it to model development timelines, test different phase durations and milestone placements, and compare scenarios side-by-side — all before committing to a full project plan. Drag build bars and milestones directly on the timeline to reposition them, double-click any swimlane to add custom bars or markers, and right-click any element to rename, split, or delete it. Phase durations are adjustable in the Table View, and the anchor date and total program length can be set to match your program. When detailed scheduling is needed, use the <span style={{color:t.text,fontWeight:600}}>CSV export</span> to carry your milestone and phase data directly into Smartsheet — no re-entry required. PNG export captures the full timeline as a clean image for presentations and reviews.
+            </div>}
+          </div>
           {/* Start options */}
           <div style={{width:"100%",maxWidth:800}}>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16}}><div style={{flex:1,height:1,background:t.border}}/><span style={{fontSize:13,color:t.textMuted,whiteSpace:"nowrap"}}>Start From Scratch</span><div style={{flex:1,height:1,background:t.border}}/></div>
             <div style={{textAlign:"center",marginBottom:16}}>
               <div style={{fontSize:18,fontWeight:700,color:t.text,marginBottom:6}}>How would you like to schedule this program?</div>
               <div style={{fontSize:14,color:t.textMuted}}>Choose a direction, import a CSV, or load a saved scenario below.</div>
             </div>
             <div style={{display:"flex",gap:14,flexWrap:"wrap",justifyContent:"center"}}>
-              {[{m:"forward",arrow:"⚓",title:"Fixed Start",sub:"Pin a start date,\nSOP floats with duration",a:defaultStartDate},{m:"backward",arrow:"⚓",title:"Fixed SOP",sub:"Pin a target SOP date,\nstart date floats with duration",a:defaultSop}].map(item=>(
+              {[{m:"forward",arrow:"⚓",title:"Fixed Start",sub:"Pin a start date,\nSOP floats with duration",a:defaultStartDate},{m:"backward",arrow:"⚓",title:"Fixed SOP",sub:"Pin a target SOP date,\nstart date floats with duration",a:defaultSop},{m:"both",arrow:"📌 📌",title:"Fix Both",sub:"Fix start AND SOP;\nphase durations adjust",a:defaultStartDate}].map(item=>(
                 <button key={item.m} onClick={()=>{setMode(item.m);setAnchor(item.a);}}
                   style={{background:t.cardBg,border:"2px solid "+t.cardBorder,borderRadius:10,padding:mob?"16px 20px":"22px 30px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:10,minWidth:mob?undefined:190,width:mob?"100%":undefined,transition:"border-color 0.15s,background 0.15s"}}
                   onMouseEnter={e=>{e.currentTarget.style.borderColor="#1e60a5";e.currentTarget.style.background=t.cardHov;}}
@@ -1057,16 +1222,8 @@ function App(){
               scenarioName={scenarioName} setScenarioName={setScName}
               onSave={saveScenario} onOverwrite={overwriteScenario} onRefresh={loadScenarios}
               onRestore={sc=>{restoreScenario(sc);setMode(sc.mode||"forward");}}
-              onDelete={deleteScenario} onRename={renameScenario} t={t} isDark={isDark} showSaveForm={false}/>
-          </div>
-          {/* Description */}
-          <div style={{width:"100%",maxWidth:800}}>
-            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}><div style={{flex:1,height:1,background:t.border}}/><span style={{fontSize:13,color:t.textMuted,whiteSpace:"nowrap"}}>About</span><div style={{flex:1,height:1,background:t.border}}/></div>
-            <div style={{background:t.cardBg,border:"1px solid "+t.cardBorder,borderRadius:10,padding:"18px 22px"}}>
-              <div style={{fontSize:13,color:t.textMuted,lineHeight:1.75}}>
-                This tool is designed for <span style={{color:t.text,fontWeight:600}}>early-stage program planning</span>, where the goal is exploring schedule options quickly rather than managing detailed tasks. Use it to model development timelines, test different phase durations and milestone placements, and compare scenarios side-by-side — all before committing to a full project plan. Drag build bars and milestones directly on the timeline to reposition them, double-click any swimlane to add custom bars or markers, and right-click any element to rename, split, or delete it. Phase durations are adjustable in the Table View, and the anchor date and total program length can be set to match your program. When detailed scheduling is needed, use the <span style={{color:t.text,fontWeight:600}}>CSV export</span> to carry your milestone and phase data directly into Smartsheet — no re-entry required. PNG export captures the full timeline as a clean image for presentations and reviews.
-              </div>
-            </div>
+              onDelete={deleteScenario} onRename={renameScenario} onDuplicate={duplicateScenario}
+              loadedKey={loadedScenarioKey} t={t} isDark={isDark} showSaveForm={false}/>
           </div>
         </div>
       ):(
@@ -1183,8 +1340,8 @@ function App(){
           <ScenarioTable scenarios={scenarios} loading={scenariosLoading} saveError={saveError} setSaveError={setSaveError}
             scenarioName={scenarioName} setScenarioName={setScName}
             onSave={saveScenario} onOverwrite={overwriteScenario} onRefresh={loadScenarios}
-            onRestore={restoreScenario} onDelete={deleteScenario} onRename={renameScenario}
-            t={t} isDark={isDark} showSaveForm={true}/>
+            onRestore={restoreScenario} onDelete={deleteScenario} onRename={renameScenario} onDuplicate={duplicateScenario}
+            loadedKey={loadedScenarioKey} t={t} isDark={isDark} showSaveForm={true}/>
         </div>
       )}
       {pendingCreate&&<CreateDialog pending={pendingCreate} onConfirm={confirmCreate} onCancel={cancelCreate} t={t}/>}
@@ -1473,8 +1630,9 @@ function TimelinePanel({t,isDark,box,timelineRef,rowLbl,ticks,dspDevFrac,dspLaun
 function PhaseBlock({phase,idx,p,dspDevFrac,t,devPhaseStart,devPhaseEnd,devDays,onDragStart,completed,onToggleComplete}){
   const[hov,setHov]=useState(false);const timer=useRef(null);const showTimer=useRef(null);
   const elemRef=useRef(null);
+  const[hovRect,setHovRect]=useState(null);
   const[menuPos,setMenuPos]=useState(null);
-  function enter(){clearTimeout(timer.current);clearTimeout(showTimer.current);showTimer.current=setTimeout(()=>setHov(true),350);}
+  function enter(){clearTimeout(timer.current);clearTimeout(showTimer.current);showTimer.current=setTimeout(()=>{if(elemRef.current)setHovRect(elemRef.current.getBoundingClientRect());setHov(true);},350);}
   function leave(){clearTimeout(showTimer.current);timer.current=setTimeout(()=>setHov(false),150);}
   useEffect(()=>()=>{clearTimeout(timer.current);clearTimeout(showTimer.current);},[]);
   useEffect(()=>{
@@ -1502,7 +1660,7 @@ function PhaseBlock({phase,idx,p,dspDevFrac,t,devPhaseStart,devPhaseEnd,devDays,
         <svg width={9} height={9} viewBox="0 0 9 9"><polyline points="1.5,4.5 3.5,6.5 7.5,2" stroke="#fff" strokeWidth={1.8} fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
       </div>}
       {onDragStart&&<div onMouseDown={onDragStart} style={{position:"absolute",right:0,top:0,bottom:0,width:10,cursor:"ew-resize",zIndex:25}}/>}
-      {hov&&!menuPos&&<PhaseTooltip phase={phase} idx={idx} startDate={devPhaseStart(idx)} endDate={devPhaseEnd(idx)} pct={p} devDays={devDays} t={t} completed={completed} hasOptions={!!onToggleComplete}/>}
+      {hov&&!menuPos&&<PhaseTooltip phase={phase} idx={idx} startDate={devPhaseStart(idx)} endDate={devPhaseEnd(idx)} pct={p} devDays={devDays} t={t} completed={completed} hasOptions={!!onToggleComplete} anchorRect={hovRect}/>}
       {menuPos&&ReactDOM.createPortal(
         <>
           <div style={{position:"fixed",inset:0,zIndex:1998}} onMouseDown={()=>setMenuPos(null)}/>
