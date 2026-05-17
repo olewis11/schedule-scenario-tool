@@ -1481,6 +1481,7 @@ function App(){
   const[saveError,setSaveError]=useState("");
   const[loadedScenarioKey,setLoadedScenarioKey]=useState(null);
   const[session,setSession]=useState(null);
+  const currentUser=useMemo(()=>session?.user?.email||"",[session]);
   const[authLoading,setAuthLoading]=useState(true);
   const[sharedScenarios,setSharedScenarios]=useState([]);
   const[sharedLoading,setSharedLoading]=useState(true);
@@ -1509,7 +1510,7 @@ function App(){
     const all=[...scenarios.map(s=>({...s,source:"saved"})),...sharedScenarios.map(s=>({...s,source:"published"}))];
     return[...compareIds].map(id=>all.find(s=>s.key===id)).filter(Boolean);
   },[compareIds,scenarios,sharedScenarios]);
-  const myPublishedKeys=useMemo(()=>{const cu=session?.user?.email||"";return new Set(sharedScenarios.filter(s=>s.owner===cu).map(s=>s.key));},[sharedScenarios,session]);
+  const myPublishedKeys=useMemo(()=>new Set(sharedScenarios.filter(s=>s.owner===currentUser).map(s=>s.key)),[sharedScenarios,currentUser]);
   const compareInMineScs=useMemo(()=>scenarios.filter(s=>compareIds.has(s.key)),[scenarios,compareIds]);
   const comparePublishedScs=useMemo(()=>compareInMineScs.filter(s=>myPublishedKeys.has(s.key)),[compareInMineScs,myPublishedKeys]);
   const compareUnpublishedScs=useMemo(()=>compareInMineScs.filter(s=>!myPublishedKeys.has(s.key)),[compareInMineScs,myPublishedKeys]);
@@ -1520,7 +1521,6 @@ function App(){
     const{data:{subscription}}=sbClient.auth.onAuthStateChange((_event,session)=>{setSession(session);setAuthLoading(false);});
     return()=>subscription.unsubscribe();
   },[]);
-  const currentUser=session?.user?.email||"";
   const[importError,setImportError]=useState("");
   const[importSuccess,setImportSuccess]=useState("");
   const[showBug,setShowBug]=useState(false);
