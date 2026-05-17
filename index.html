@@ -1509,7 +1509,7 @@ function App(){
     const all=[...scenarios.map(s=>({...s,source:"saved"})),...sharedScenarios.map(s=>({...s,source:"published"}))];
     return[...compareIds].map(id=>all.find(s=>s.key===id)).filter(Boolean);
   },[compareIds,scenarios,sharedScenarios]);
-  const myPublishedKeys=useMemo(()=>new Set(sharedScenarios.filter(s=>s.owner===currentUser).map(s=>s.key)),[sharedScenarios,currentUser]);
+  const myPublishedKeys=useMemo(()=>{const cu=session?.user?.email||"";return new Set(sharedScenarios.filter(s=>s.owner===cu).map(s=>s.key));},[sharedScenarios,session]);
   const compareInMineScs=useMemo(()=>scenarios.filter(s=>compareIds.has(s.key)),[scenarios,compareIds]);
   const comparePublishedScs=useMemo(()=>compareInMineScs.filter(s=>myPublishedKeys.has(s.key)),[compareInMineScs,myPublishedKeys]);
   const compareUnpublishedScs=useMemo(()=>compareInMineScs.filter(s=>!myPublishedKeys.has(s.key)),[compareInMineScs,myPublishedKeys]);
