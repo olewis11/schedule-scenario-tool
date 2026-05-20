@@ -15,6 +15,8 @@
 body{margin:0;padding:0;background:#edf1f7;font-family:Inter,system-ui,sans-serif;overflow-x:hidden}
 .theme-fade,.theme-fade *{transition:background-color 0.25s ease,color 0.25s ease,border-color 0.25s ease}
 .theme-fade button,.theme-fade input{transition:background-color 0.15s,color 0.15s,border-color 0.15s}
+@keyframes compareBarIn{from{max-height:0;opacity:0}to{max-height:200px;opacity:1}}
+@keyframes compareBarOut{from{max-height:200px;opacity:1}to{max-height:0;opacity:0}}
 </style>
 </head>
 <body>
@@ -24,6 +26,21 @@ const {useState,useRef,useEffect,useMemo,useCallback}=React;
 
 const SB_URL="https://cmwtfuxyiyhvffrhjkgg.supabase.co";
 const SB_KEY="sb_publishable_jW8ZURE_Ywa64Qr45pUN1Q_qa3Mk_mU";
+// ── Supabase Auth RLS (run once in Supabase SQL editor after enabling auth) ────
+// -- Lock down personal scenarios to authenticated users only:
+// DROP POLICY IF EXISTS "public_read" ON scenarios;
+// CREATE POLICY "auth_all" ON scenarios FOR ALL
+//   USING (auth.uid() IS NOT NULL)
+//   WITH CHECK (auth.uid() IS NOT NULL);
+//
+// -- shared_scenarios: public read stays, mutations require auth:
+// DROP POLICY IF EXISTS "public_write" ON shared_scenarios;
+// DROP POLICY IF EXISTS "public_update" ON shared_scenarios;
+// DROP POLICY IF EXISTS "public_delete" ON shared_scenarios;
+// CREATE POLICY "auth_insert" ON shared_scenarios FOR INSERT WITH CHECK (auth.uid() IS NOT NULL);
+// CREATE POLICY "auth_update" ON shared_scenarios FOR UPDATE USING (auth.uid() IS NOT NULL);
+// CREATE POLICY "auth_delete" ON shared_scenarios FOR DELETE USING (auth.uid() IS NOT NULL);
+// ─────────────────────────────────────────────────────────────────────────────
 // shared_scenarios table SQL (run once in Supabase SQL editor):
 // CREATE TABLE IF NOT EXISTS shared_scenarios (
 //   id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -76,6 +93,7 @@ const LIGHT={bg:"#edf1f7",panel:"#ffffff",text:"#1a2840",textMuted:"#526880",tex
 
 function normP(pcts) {
   const sum = pcts.reduce((a, b) => a + b, 0);
+  if(sum===0)return pcts.map(()=>1/pcts.length);
   return pcts.map(v => v / sum);
 }
 function mkSt(normalized) {
@@ -102,7 +120,8 @@ function toInp(d) {
   return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
 }
 function frInp(s) {
-  const [y, m, day] = s.split("-").map(Number);
+  const [y, m, day] = (s||"").split("-").map(Number);
+  if(!y||!m||!day||isNaN(y)||isNaN(m)||isNaN(day))return today0();
   return new Date(y, m - 1, day);
 }
 function addD(d, n) { const r = new Date(d); r.setDate(r.getDate() + n); return r; }
@@ -531,6 +550,7 @@ function DateInput({date,onCommit,style}){
   useEffect(()=>{
     if(inputRef.current&&!editing.current)inputRef.current.value=toInp(date);
   },[date]);
+  useEffect(()=>()=>{clearTimeout(timer.current);},[]);
   return<input ref={inputRef} type="date" defaultValue={toInp(date)}
     onChange={e=>{
       editing.current=true;
@@ -587,8 +607,8 @@ function ScenarioTable({scenarios,loading,saveError,setSaveError,scenarioName,se
   const[collapsed,setCollapsed]=useState(false);
   const[menuOpen,setMenuOpen]=useState(null);
   const[menuPos,setMenuPos]=useState({top:0,right:0});
-  const[sortCol,setSortCol]=useState(null);
-  const[sortDir,setSortDir]=useState("asc");
+  const[sortCol,setSortCol]=useState("modified");
+  const[sortDir,setSortDir]=useState("desc");
   const[search,setSearch]=useState("");
   const[pageLimit,setPageLimit]=useState(5);
   const renameInputRef=useRef(null);
@@ -609,12 +629,12 @@ function ScenarioTable({scenarios,loading,saveError,setSaveError,scenarioName,se
     setConfirmDel(null);setConfirmOver(null);
   }
   function toggleSort(col){
-    if(sortCol===col){if(sortDir==="asc")setSortDir("desc");else{setSortCol(null);setSortDir("asc");}}
-    else{setSortCol(col);setSortDir("asc");}
+    if(sortCol===col){if(sortDir==="desc")setSortDir("asc");else{setSortCol(null);setSortDir("desc");}}
+    else{setSortCol(col);setSortDir("desc");}
   }
   function sortIcon(col){
     const active=sortCol===col;
-    return<span style={{marginLeft:3,fontSize:9,opacity:active?1:0.55,fontStyle:"normal"}}>{active?(sortDir==="asc"?"↑":"↓"):"↕"}</span>;
+    return<span style={{marginLeft:3,fontSize:9,opacity:active?1:0.55,fontStyle:"normal"}}>{active?(sortDir==="desc"?"↓":"↑"):"↕"}</span>;
   }
   const displayList=useMemo(()=>{
     const q=search.trim().toLowerCase();
@@ -625,13 +645,13 @@ function ScenarioTable({scenarios,loading,saveError,setSaveError,scenarioName,se
       if(sortCol==="name"){av=(a.name||"").toLowerCase();bv=(b.name||"").toLowerCase();}
       else if(sortCol==="created"){av=a.created;bv=b.created;}
       else{av=a.modified;bv=b.modified;}
-      return sortDir==="asc"?(av<bv?-1:av>bv?1:0):(av>bv?-1:av<bv?1:0);
+      return sortDir==="desc"?(av>bv?-1:av<bv?1:0):(av<bv?-1:av>bv?1:0);
     });
   },[scenarios,sortCol,sortDir,search]);
   const visibleList=pageLimit?displayList.slice(0,pageLimit):displayList;
   const menuSc=scenarios.find(s=>s.key===menuOpen);
   function menuItem(label,onClick,danger){
-    return(<button key={label} onClick={()=>{onClick();setMenuOpen(null);}}
+    return(<button key={label} onMouseDown={e=>{e.preventDefault();onClick();setMenuOpen(null);}}
       onMouseEnter={e=>e.currentTarget.style.background=isDark?"#1a2e48":"#edf3fa"}
       onMouseLeave={e=>e.currentTarget.style.background="transparent"}
       style={{display:"block",width:"100%",textAlign:"left",padding:"8px 14px",border:"none",
@@ -653,7 +673,8 @@ function ScenarioTable({scenarios,loading,saveError,setSaveError,scenarioName,se
             <svg style={{position:"absolute",left:7,pointerEvents:"none"}} width={12} height={12} viewBox="0 0 16 16" fill="none"><circle cx={6.5} cy={6.5} r={5} stroke={t.textDim} strokeWidth={1.8}/><line x1={10.5} y1={10.5} x2={14.5} y2={14.5} stroke={t.textDim} strokeWidth={1.8} strokeLinecap="round"/></svg>
             <input value={search} onChange={e=>{setSearch(e.target.value);setPageLimit(5);}}
               placeholder="Search…" onClick={e=>e.stopPropagation()}
-              style={{paddingLeft:24,paddingRight:7,paddingTop:4,paddingBottom:4,fontSize:12,borderRadius:4,border:"1px solid "+t.border,background:isDark?"#0e1b2d":"#fff",color:t.inText,outline:"none",width:130}}/>
+              style={{paddingLeft:24,paddingRight:search?22:7,paddingTop:4,paddingBottom:4,fontSize:12,borderRadius:4,border:"1px solid "+t.border,background:isDark?"#0e1b2d":"#fff",color:t.inText,outline:"none",width:130}}/>
+            {search&&<button onClick={e=>{e.stopPropagation();setSearch("");setPageLimit(5);}} title="Clear search" aria-label="Clear search" style={{position:"absolute",right:4,background:"none",border:"none",cursor:"pointer",padding:"0 2px",color:t.textDim,fontSize:14,lineHeight:1,display:"flex",alignItems:"center"}}>×</button>}
           </div>
           {onRefresh&&<button onClick={e=>{e.stopPropagation();onRefresh();}} title="Refresh scenarios" style={{background:"none",border:"none",cursor:"pointer",padding:"2px 4px",display:"flex",alignItems:"center",color:t.textMuted,borderRadius:3}}><svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>}
           <svg width={14} height={14} viewBox="0 0 14 14" style={{flexShrink:0,transform:collapsed?"rotate(-90deg)":"rotate(0deg)",transition:"transform 0.2s"}} onClick={()=>setCollapsed(v=>!v)}><polyline points="2,5 7,10 12,5" stroke={t.textMuted} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
@@ -687,8 +708,10 @@ function ScenarioTable({scenarios,loading,saveError,setSaveError,scenarioName,se
               const isSel=compareIds&&compareIds.has(sc.key);
               const selDisabled=compareIds&&!isSel&&compareIds.size>=5;
               const isLoaded=loadedKey&&sc.key===loadedKey;
+              const selIdx=isSel?[...compareIds].indexOf(sc.key):-1;
+              const selBg=selIdx>=0?COMPARE_ACCENTS[selIdx]+(isDark?"33":"18"):null;
               return(
-                <tr key={sc.key} style={{background:isConf||isOver?(isDark?t.dangerBg:"#fff8f8"):isLoaded?(isDark?"#0e2a18":"#f0fbf4"):isSel?(isDark?"#0e2035":"#f0f6ff"):"transparent"}}>
+                <tr key={sc.key} style={{background:isConf||isOver?(isDark?t.dangerBg:"#fff8f8"):isLoaded?(isDark?"#0e2a18":"#f0fbf4"):selBg||"transparent"}}>
                   {onToggleCompare&&<td style={{...tdS,padding:"7px 8px 7px 0",width:20}}>
                     <input type="checkbox" checked={!!isSel} disabled={!!selDisabled}
                       onChange={()=>onToggleCompare(sc.key)}
@@ -725,10 +748,9 @@ function ScenarioTable({scenarios,loading,saveError,setSaveError,scenarioName,se
                       <button onClick={()=>{onOverwrite(sc.key);setConfirmOver(null);}} style={{padding:"3px 10px",borderRadius:4,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:t.dangerText,color:"#fff"}}>Confirm</button>
                       <button onClick={()=>setConfirmOver(null)} style={smBtn(false)}>Cancel</button>
                     </div>):(<div style={{display:"flex",gap:4,justifyContent:"flex-end",alignItems:"center"}}>
-                      <button onClick={()=>onRestore(sc)} style={smBtn(false)}>Load</button>
+                      <button onClick={()=>onRestore(sc)} style={{...smBtn(false),display:"inline-flex",alignItems:"center",lineHeight:1}}>Load</button>
                       <button onClick={e=>openMenu(e,sc.key)} title="More actions"
-                        style={{...smBtn(false),padding:"3px 8px",letterSpacing:2,fontWeight:700}}>···</button>
-                      <button onClick={()=>{setConfirmDel(sc.key);setConfirmOver(null);setMenuOpen(null);}} style={smBtn(true)}>Delete</button>
+                        style={{...smBtn(false),padding:"3px 10px",fontWeight:700,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1}}>⋮</button>
                     </div>)}
                   </td>
                 </tr>
@@ -766,6 +788,7 @@ function ScenarioTable({scenarios,loading,saveError,setSaveError,scenarioName,se
           {menuItem("Duplicate",()=>startDup(menuSc),false)}
           {menuItem("Rename",()=>{setRenaming(menuSc.key);setRenameVal(menuSc.name);setDuplicating(null);},false)}
           {onPublish&&menuItem(publishedKeys&&publishedKeys.has(menuOpen)?"Re-publish":"Publish",()=>onPublish(menuSc),false)}
+          {menuItem("Delete",()=>{setConfirmDel(menuOpen);setConfirmOver(null);},true)}
         </div>
       </>}
       </>}
@@ -774,21 +797,72 @@ function ScenarioTable({scenarios,loading,saveError,setSaveError,scenarioName,se
 }
 
 // ── SharedScenarioTable ───────────────────────────────────────────────────────
-function SharedScenarioTable({sharedScenarios,loading,shareError,currentUser,onRestore,onUnpublish,onRefresh,compareIds,onToggleCompare,t,isDark}){
+function SharedScenarioTable({sharedScenarios,loading,shareError,currentUser,onRestore,onUnpublish,onDuplicate,onRenameShared,onRefresh,compareIds,onToggleCompare,t,isDark}){
   const[collapsed,setCollapsed]=useState(false);
   const[confirmUnpub,setConfirmUnpub]=useState(null);
   const[search,setSearch]=useState("");
   const[pageLimit,setPageLimit]=useState(5);
+  const[menuOpen,setMenuOpen]=useState(null);
+  const[menuPos,setMenuPos]=useState(null);
+  const[renamingSh,setRenamingSh]=useState(null);
+  const[renameShVal,setRenameShVal]=useState("");
+  const renameShRef=useRef(null);
+  useEffect(()=>{if(renamingSh&&renameShRef.current)renameShRef.current.select();},[renamingSh]);
+  const[sortCol,setSortCol]=useState("publishedAt");
+  const[sortDir,setSortDir]=useState("desc");
+  const[ownerFilter,setOwnerFilter]=useState("");
+  function toggleSort(col){
+    if(sortCol===col){if(sortDir==="desc")setSortDir("asc");else{setSortCol(null);setSortDir("desc");}}
+    else{setSortCol(col);setSortDir("desc");}
+  }
+  function sortIcon(col){
+    const active=sortCol===col;
+    return<span style={{marginLeft:3,fontSize:9,opacity:active?1:0.55,fontStyle:"normal"}}>{active?(sortDir==="desc"?"↓":"↑"):"↕"}</span>;
+  }
   function smBtn(danger){return{padding:"3px 10px",borderRadius:4,border:"1px solid "+(danger?t.dangerText:t.border),cursor:"pointer",fontSize:12,fontWeight:600,background:danger?(isDark?t.dangerBg:"#fff4f4"):t.btnBg,color:danger?t.dangerText:t.btnText};}
   const thS={fontSize:11,color:t.rowLbl,textTransform:"uppercase",letterSpacing:"0.6px",padding:"0 10px 8px 0",textAlign:"left",fontWeight:600,borderBottom:"2px solid "+t.border,whiteSpace:"nowrap"};
+  const thSrt={...thS,cursor:"pointer",userSelect:"none"};
   const tdS={fontSize:13,color:t.textMuted,padding:"7px 10px 7px 0",borderBottom:"1px solid "+t.border,verticalAlign:"middle"};
+  const owners=useMemo(()=>[...new Set(sharedScenarios.map(s=>s.owner||"").filter(Boolean))].sort(),[sharedScenarios]);
   const filteredShared=useMemo(()=>{
     const q=search.trim().toLowerCase();
-    return q?sharedScenarios.filter(s=>(s.name||"").toLowerCase().includes(q)||(s.owner||"").toLowerCase().includes(q)):sharedScenarios;
-  },[sharedScenarios,search]);
+    let list=sharedScenarios;
+    if(ownerFilter)list=list.filter(s=>s.owner===ownerFilter);
+    if(q)list=list.filter(s=>(s.name||"").toLowerCase().includes(q)||(s.owner||"").toLowerCase().includes(q));
+    if(!sortCol)return list;
+    return [...list].sort((a,b)=>{
+      let av,bv;
+      if(sortCol==="name"){av=(a.name||"").toLowerCase();bv=(b.name||"").toLowerCase();}
+      else if(sortCol==="owner"){av=(a.owner||"").toLowerCase();bv=(b.owner||"").toLowerCase();}
+      else{av=a.publishedAt||a.modified||"";bv=b.publishedAt||b.modified||"";}
+      return sortDir==="desc"?(av>bv?-1:av<bv?1:0):(av<bv?-1:av>bv?1:0);
+    });
+  },[sharedScenarios,search,ownerFilter,sortCol,sortDir]);
   const visibleShared=pageLimit?filteredShared.slice(0,pageLimit):filteredShared;
+  function openShMenu(e,sc){
+    e.stopPropagation();
+    const rect=e.currentTarget.getBoundingClientRect();
+    setMenuOpen(sc.key+(sc.owner||""));
+    setMenuPos({x:rect.right,y:rect.bottom+4});
+    setConfirmUnpub(null);setRenamingSh(null);
+  }
+  const menuSc=sharedScenarios.find(s=>s.key+(s.owner||"")===menuOpen);
+  const menuIsOwner=menuSc&&currentUser&&menuSc.owner===currentUser;
+  function shMenuItem(label,action,danger){
+    return<button onMouseDown={e=>{e.stopPropagation();action();setMenuOpen(null);setMenuPos(null);}}
+      style={{fontSize:12,color:danger?t.dangerText:t.text,cursor:"pointer",padding:"6px 14px",background:"transparent",border:"none",textAlign:"left",width:"100%",display:"block",whiteSpace:"nowrap",fontWeight:danger?700:500}}>{label}</button>;
+  }
   return(
     <div style={{background:t.panel,borderRadius:7,border:"1px solid "+t.border,padding:"16px 20px",marginBottom:12}}>
+      {menuPos&&(<>
+        <div style={{position:"fixed",inset:0,zIndex:1998}} onMouseDown={()=>{setMenuOpen(null);setMenuPos(null);}}/>
+        <div style={{position:"fixed",left:Math.max(4,menuPos.x-160),top:menuPos.y,zIndex:1999,background:t.panel,border:"1px solid "+t.border,borderRadius:6,boxShadow:"0 4px 20px rgba(0,0,0,0.22)",minWidth:150,padding:"4px 0",overflow:"hidden"}}>
+          {shMenuItem("Duplicate",()=>onDuplicate&&onDuplicate(menuSc),false)}
+          {menuIsOwner&&shMenuItem("Rename",()=>{setRenamingSh(menuSc.key+(menuSc.owner||""));setRenameShVal(menuSc.name);},false)}
+          {menuIsOwner&&<div style={{height:1,background:t.border,margin:"4px 0"}}/>}
+          {menuIsOwner&&shMenuItem("Unpublish",()=>setConfirmUnpub(menuSc.key+(menuSc.owner||"")),true)}
+        </div>
+      </>)}
       <div onClick={()=>setCollapsed(v=>!v)} style={{cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:collapsed?0:12,gap:8}}>
         <div style={{display:"flex",alignItems:"center",gap:8,minWidth:0}}>
           <div style={{fontSize:13,color:t.textMuted,fontWeight:700,textTransform:"uppercase",letterSpacing:0.4,whiteSpace:"nowrap"}}>Published Scenarios</div>
@@ -799,8 +873,10 @@ function SharedScenarioTable({sharedScenarios,loading,shareError,currentUser,onR
             <svg style={{position:"absolute",left:7,pointerEvents:"none"}} width={12} height={12} viewBox="0 0 16 16" fill="none"><circle cx={6.5} cy={6.5} r={5} stroke={t.textDim} strokeWidth={1.8}/><line x1={10.5} y1={10.5} x2={14.5} y2={14.5} stroke={t.textDim} strokeWidth={1.8} strokeLinecap="round"/></svg>
             <input value={search} onChange={e=>{setSearch(e.target.value);setPageLimit(5);}}
               placeholder="Search…" onClick={e=>e.stopPropagation()}
-              style={{paddingLeft:24,paddingRight:7,paddingTop:4,paddingBottom:4,fontSize:12,borderRadius:4,border:"1px solid "+t.border,background:isDark?"#0e1b2d":"#fff",color:t.inText,outline:"none",width:130}}/>
+              style={{paddingLeft:24,paddingRight:search?22:7,paddingTop:4,paddingBottom:4,fontSize:12,borderRadius:4,border:"1px solid "+t.border,background:isDark?"#0e1b2d":"#fff",color:t.inText,outline:"none",width:130}}/>
+            {search&&<button onClick={e=>{e.stopPropagation();setSearch("");setPageLimit(5);}} title="Clear search" aria-label="Clear search" style={{position:"absolute",right:4,background:"none",border:"none",cursor:"pointer",padding:"0 2px",color:t.textDim,fontSize:14,lineHeight:1,display:"flex",alignItems:"center"}}>×</button>}
           </div>
+          {owners.length>1&&<select aria-label="Filter by owner" value={ownerFilter} onChange={e=>{setOwnerFilter(e.target.value);setPageLimit(5);}} onClick={e=>e.stopPropagation()} style={{fontSize:12,borderRadius:4,border:"1px solid "+t.border,background:isDark?"#0e1b2d":"#fff",color:t.inText,padding:"4px 6px",cursor:"pointer",outline:"none",maxWidth:130}}><option value="">All Owners</option>{owners.map(o=><option key={o} value={o}>{o.split("@")[0]}</option>)}</select>}
           {onRefresh&&<button onClick={e=>{e.stopPropagation();onRefresh();}} title="Refresh shared scenarios" style={{background:"none",border:"none",cursor:"pointer",padding:"2px 4px",display:"flex",alignItems:"center",color:t.textMuted,borderRadius:3}}><svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>}
           <svg width={14} height={14} viewBox="0 0 14 14" style={{flexShrink:0,transform:collapsed?"rotate(-90deg)":"rotate(0deg)",transition:"transform 0.2s"}} onClick={()=>setCollapsed(v=>!v)}><polyline points="2,5 7,10 12,5" stroke={t.textMuted} strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
         </div>
@@ -814,26 +890,40 @@ function SharedScenarioTable({sharedScenarios,loading,shareError,currentUser,onR
         <table style={{width:"100%",minWidth:560,borderCollapse:"collapse"}}>
           <thead><tr>
             {onToggleCompare&&<th style={{...thS,padding:"0 8px 8px 0",width:20}}/>}
-            <th style={thS}>Name</th>
-            <th style={thS}>Owner</th>
-            <th style={thS}>Published</th>
+            <th style={thSrt} onClick={()=>toggleSort("name")}>Name{sortIcon("name")}</th>
+            <th style={thSrt} onClick={()=>toggleSort("owner")}>Owner{sortIcon("owner")}</th>
+            <th style={thSrt} onClick={()=>toggleSort("publishedAt")}>Published{sortIcon("publishedAt")}</th>
             <th style={{...thS,textAlign:"right",paddingRight:0}}>Actions</th>
           </tr></thead>
           <tbody>
             {visibleShared.map(sc=>{
               const isOwner=currentUser&&sc.owner===currentUser;
-              const isConf=confirmUnpub===sc.key+sc.owner;
+              const rowId=sc.key+(sc.owner||"");
+              const isConf=confirmUnpub===rowId;
+              const isRenaming=renamingSh===rowId;
               const isSel=compareIds&&compareIds.has(sc.key);
               const selDisabled=compareIds&&!isSel&&compareIds.size>=5;
+              const selIdx=isSel?[...compareIds].indexOf(sc.key):-1;
+              const selBg=selIdx>=0?COMPARE_ACCENTS[selIdx]+(isDark?"33":"18"):null;
               return(
-                <tr key={sc.key+sc.owner} style={{background:isConf?(isDark?t.dangerBg:"#fff8f8"):isSel?(isDark?"#0e2035":"#f0f6ff"):"transparent"}}>
+                <tr key={rowId} style={{background:isConf?(isDark?t.dangerBg:"#fff8f8"):selBg||"transparent"}}>
                   {onToggleCompare&&<td style={{...tdS,padding:"7px 8px 7px 0",width:20}}>
                     <input type="checkbox" checked={!!isSel} disabled={!!selDisabled}
                       onChange={()=>onToggleCompare(sc.key)}
                       title={selDisabled?"Max 5 scenarios for comparison":isSel?"Remove from comparison":"Add to comparison"}
                       style={{margin:0,cursor:selDisabled?"not-allowed":"pointer",accentColor:"#3b82f6",width:14,height:14}}/>
                   </td>}
-                  <td style={{...tdS,color:t.text,fontWeight:600}}>{sc.name}</td>
+                  <td style={{...tdS,color:t.text,fontWeight:600}}>
+                    {isRenaming?(
+                      <div style={{display:"flex",gap:5,alignItems:"center"}}>
+                        <input ref={renameShRef} value={renameShVal} onChange={e=>setRenameShVal(e.target.value)}
+                          onKeyDown={e=>{if(e.key==="Enter"&&renameShVal.trim()){onRenameShared(sc,renameShVal.trim());setRenamingSh(null);}if(e.key==="Escape")setRenamingSh(null);}}
+                          style={{flexGrow:1,background:isDark?"#0e1b2d":"#fff",border:"1px solid "+t.inBorder,color:t.inText,padding:"3px 7px",borderRadius:3,fontSize:13,outline:"none"}}/>
+                        <button onClick={()=>{if(renameShVal.trim()){onRenameShared(sc,renameShVal.trim());setRenamingSh(null);}}} style={{padding:"3px 9px",borderRadius:3,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:t.btnAct,color:"#fff"}}>Save</button>
+                        <button onClick={()=>setRenamingSh(null)} style={smBtn(false)}>Cancel</button>
+                      </div>
+                    ):sc.name}
+                  </td>
                   <td style={tdS}>
                     <span title={sc.owner} style={{display:"inline-flex",alignItems:"center",gap:5}}>
                       <span style={{fontSize:11,background:isDark?"#1a2e48":"#dce8f5",color:t.btnText,borderRadius:3,padding:"1px 6px",fontWeight:700,letterSpacing:0.3}}>{(sc.owner||"").split("@")[0]}</span>
@@ -846,10 +936,13 @@ function SharedScenarioTable({sharedScenarios,loading,shareError,currentUser,onR
                       <span style={{fontSize:12,color:t.dangerText,fontWeight:600}}>Unpublish "{sc.name}"?</span>
                       <button onClick={()=>{onUnpublish(sc);setConfirmUnpub(null);}} style={{padding:"3px 10px",borderRadius:4,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:t.dangerText,color:"#fff"}}>Confirm</button>
                       <button onClick={()=>setConfirmUnpub(null)} style={smBtn(false)}>Cancel</button>
-                    </div>):(<div style={{display:"flex",gap:5,justifyContent:"flex-end"}}>
-                      <button onClick={()=>onRestore(sc)} style={smBtn(false)}>Load</button>
-                      {isOwner&&<button onClick={()=>setConfirmUnpub(sc.key+sc.owner)} style={smBtn(true)}>Unpublish</button>}
-                    </div>)}
+                    </div>):(
+                      <div style={{display:"flex",gap:5,justifyContent:"flex-end",alignItems:"center"}}>
+                        <button onClick={()=>onRestore(sc)} style={{...smBtn(false),display:"inline-flex",alignItems:"center",lineHeight:1}}>Load</button>
+                        <button onClick={e=>openShMenu(e,sc)} title="More actions"
+                          style={{...smBtn(false),padding:"3px 10px",fontWeight:700,display:"inline-flex",alignItems:"center",justifyContent:"center",lineHeight:1}}>⋮</button>
+                      </div>
+                    )}
                   </td>
                 </tr>
               );
@@ -1102,7 +1195,7 @@ function CompareStrip({data,ticks,xFrac,sopX,accentColor,compareAlign,todayFrac,
 
 function CompareView({selected,compareAlign,setCompareAlign,hiddenRows,toggleRow,todayDate,showTodayLine,toggleTodayLine,t,isDark,onBack,
   scenarios,scenariosLoading,saveError,setSaveError,scenarioName,setScenarioName,onSave,onOverwrite,onRestore,onDelete,onRename,onDuplicate,onRefresh,onPublish,publishedKeys,
-  sharedScenarios,sharedLoading,shareError,onUnpublish,onRefreshShared,currentUser,
+  sharedScenarios,sharedLoading,shareError,onUnpublish,onDuplicateShared,onRenameShared,onRefreshShared,currentUser,
   compareIds,onToggleCompare,loadedScenarioKey}){
   const[addOpen,setAddOpen]=useState(false);
   const[exporting,setExporting]=useState(false);
@@ -1238,10 +1331,63 @@ function CompareView({selected,compareAlign,setCompareAlign,hiddenRows,toggleRow
               t={t} isDark={isDark} showSaveForm={false}/>
             <SharedScenarioTable sharedScenarios={sharedScenarios||[]} loading={!!sharedLoading}
               shareError={shareError||""} currentUser={currentUser}
-              onRestore={onRestore||function(){}} onUnpublish={onUnpublish||function(){}} onRefresh={onRefreshShared||function(){}}
+              onRestore={onRestore||function(){}} onUnpublish={onUnpublish||function(){}} onDuplicate={onDuplicateShared||function(){}} onRenameShared={onRenameShared||function(){}} onRefresh={onRefreshShared||function(){}}
               compareIds={compareIds||new Set()} onToggleCompare={onToggleCompare||function(){}}
               t={t} isDark={isDark}/>
           </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Sign-in screen (shown when no Supabase session) ──────────────────────────
+function SignInScreen({isDark,setDark,t}){
+  const[email,setEmail]=useState("");
+  const[sent,setSent]=useState(false);
+  const[loading,setLoading]=useState(false);
+  const[error,setError]=useState("");
+  async function handleSend(e){
+    e.preventDefault();
+    const addr=email.trim();
+    if(!addr){setError("Enter your email address.");return;}
+    setLoading(true);setError("");
+    const{error:err}=await sbClient.auth.signInWithOtp({email:addr,options:{emailRedirectTo:window.location.href}});
+    setLoading(false);
+    if(err){setError(err.message);return;}
+    setSent(true);
+  }
+  return(
+    <div style={{minHeight:"100vh",background:t.bg,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:"Inter,system-ui,sans-serif",padding:20,boxSizing:"border-box"}}>
+      <div style={{position:"absolute",top:16,right:16,display:"flex",borderRadius:5,overflow:"hidden",border:"1px solid "+t.border}}>
+        {[{v:false,icon:<SunIcon/>,lbl:"Light"},{v:true,icon:<MoonIcon/>,lbl:"Dark"}].map(item=>(
+          <button key={item.lbl} onClick={()=>setDark(item.v)} style={{padding:"5px 11px",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:5,fontSize:13,fontWeight:600,background:isDark===item.v?t.btnAct:t.btnBg,color:isDark===item.v?"#fff":t.btnText,transition:"background 0.15s"}}>{item.icon}{item.lbl}</button>
+        ))}
+      </div>
+      <div style={{width:"100%",maxWidth:400,background:t.cardBg,border:"1px solid "+t.cardBorder,borderRadius:12,padding:"32px 36px",boxShadow:"0 4px 24px rgba(0,0,0,0.10)"}}>
+        <div style={{fontSize:22,fontWeight:800,color:t.text,marginBottom:6,letterSpacing:0.2}}>Project Timeline Tool</div>
+        <div style={{fontSize:13,color:t.textMuted,marginBottom:28,lineHeight:1.6}}>Sign in with your email to access your saved scenarios. No password needed — we'll send a magic link.</div>
+        {sent?(
+          <div style={{textAlign:"center",padding:"20px 0"}}>
+            <div style={{fontSize:36,marginBottom:12}}>📬</div>
+            <div style={{fontSize:15,fontWeight:700,color:t.text,marginBottom:8}}>Check your inbox</div>
+            <div style={{fontSize:13,color:t.textMuted,lineHeight:1.6}}>We sent a sign-in link to <strong style={{color:t.text}}>{email}</strong>.<br/>Click it to continue.</div>
+            <button onClick={()=>{setSent(false);setEmail("");}} style={{marginTop:16,fontSize:12,color:t.textDim,background:"none",border:"none",cursor:"pointer",textDecoration:"underline"}}>Use a different email</button>
+          </div>
+        ):(
+          <form onSubmit={handleSend}>
+            <div style={{marginBottom:16}}>
+              <label style={{display:"block",fontSize:12,fontWeight:600,color:t.textMuted,marginBottom:6,letterSpacing:0.2}}>Email address</label>
+              <input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com"
+                autoFocus
+                style={{width:"100%",padding:"9px 12px",borderRadius:6,border:"1px solid "+t.border,fontSize:14,background:t.inBg,color:t.inText,outline:"none",boxSizing:"border-box",colorScheme:isDark?"dark":"light"}}/>
+            </div>
+            {error&&<div style={{fontSize:12,color:t.dangerText,marginBottom:12,background:isDark?t.dangerBg:"#fff4f4",padding:"6px 10px",borderRadius:4}}>{error}</div>}
+            <button type="submit" disabled={loading}
+              style={{width:"100%",padding:"10px",borderRadius:6,border:"none",cursor:loading?"wait":"pointer",fontSize:14,fontWeight:700,background:"#3b82f6",color:"#fff",opacity:loading?0.7:1,transition:"opacity 0.15s"}}>
+              {loading?"Sending…":"Send magic link"}
+            </button>
+          </form>
         )}
       </div>
     </div>
@@ -1298,7 +1444,7 @@ function App(){
   const mob=useIsMobile();
   const portrait=useIsPortrait();
   const defaultDurDays=useMemo(()=>Math.round(365.25*2),[]);
-  const defaultSop=useMemo(()=>addY(today0(),2.5),[]);
+  const defaultSop=useMemo(()=>addD(today0(),Math.round(365.25*2.5)),[]);
   const defaultStartDate=useMemo(()=>addD(defaultSop,-defaultDurDays),[]);
 
   // Test bars stored as phase-relative fractions; values > 1.0 extend into subsequent phases.
@@ -1334,23 +1480,47 @@ function App(){
   const[scenarioName,setScName]=useState("");
   const[saveError,setSaveError]=useState("");
   const[loadedScenarioKey,setLoadedScenarioKey]=useState(null);
-  const[currentUser,setCurrentUser]=useState(()=>localStorage.getItem('tlUserName')||"");
+  const[session,setSession]=useState(null);
+  const currentUser=useMemo(()=>session?.user?.email||"",[session]);
+  const[authLoading,setAuthLoading]=useState(true);
   const[sharedScenarios,setSharedScenarios]=useState([]);
   const[sharedLoading,setSharedLoading]=useState(true);
   const[shareError,setShareError]=useState("");
   const[compareIds,setCompareIds]=useState(new Set());
+  const compareDisplayIds=useRef(new Set());
+  if(compareIds.size>0)compareDisplayIds.current=compareIds;
+  const[compareBarShown,setCompareBarShown]=useState(false);
+  const[compareBarExiting,setCompareBarExiting]=useState(false);
+  const compareBarWasShown=useRef(false);
+  const[confirmDelBar,setConfirmDelBar]=useState(false);
+  const[compareMenuPos,setCompareMenuPos]=useState(null);
   const[compareView,setCompareView]=useState(false);
   const[compareAlign,setCompareAlign]=useState("date");
   const[compareHiddenRows,setCompareHiddenRows]=useState({gates:true,reviews:true,builds:true,testing:true});
-  const[userNameEditing,setUserNameEditing]=useState(false);
-  const[userNameDraft,setUserNameDraft]=useState(()=>localStorage.getItem('tlUserName')||"");
-  function toggleCompare(key){setCompareIds(prev=>{const next=new Set(prev);if(next.has(key))next.delete(key);else if(next.size<5)next.add(key);return next;});}
+  function showCompareBar(){setCompareBarShown(true);setCompareBarExiting(false);compareBarWasShown.current=true;}
+  function hideCompareBar(){if(compareBarWasShown.current)setCompareBarExiting(true);}
+  function clearCompareIds(){setCompareIds(new Set());hideCompareBar();}
+  function toggleCompare(key){
+    const next=new Set(compareIds);
+    if(next.has(key))next.delete(key);else if(next.size<5)next.add(key);
+    setCompareIds(next);
+    if(next.size>=1)showCompareBar();else hideCompareBar();
+  }
   const compareSelected=useMemo(()=>{
     const all=[...scenarios.map(s=>({...s,source:"saved"})),...sharedScenarios.map(s=>({...s,source:"published"}))];
     return[...compareIds].map(id=>all.find(s=>s.key===id)).filter(Boolean);
   },[compareIds,scenarios,sharedScenarios]);
   const myPublishedKeys=useMemo(()=>new Set(sharedScenarios.filter(s=>s.owner===currentUser).map(s=>s.key)),[sharedScenarios,currentUser]);
+  const compareInMineScs=useMemo(()=>scenarios.filter(s=>compareIds.has(s.key)),[scenarios,compareIds]);
+  const comparePublishedScs=useMemo(()=>compareInMineScs.filter(s=>myPublishedKeys.has(s.key)),[compareInMineScs,myPublishedKeys]);
+  const compareUnpublishedScs=useMemo(()=>compareInMineScs.filter(s=>!myPublishedKeys.has(s.key)),[compareInMineScs,myPublishedKeys]);
   function toggleCompareRow(key){setCompareHiddenRows(h=>({...h,[key]:!h[key]}));}
+  // ── Supabase Auth ─────────────────────────────────────────────────────────
+  useEffect(()=>{
+    sbClient.auth.getSession().then(({data:{session}})=>{setSession(session);setAuthLoading(false);});
+    const{data:{subscription}}=sbClient.auth.onAuthStateChange((_event,session)=>{setSession(session);setAuthLoading(false);});
+    return()=>subscription.unsubscribe();
+  },[]);
   const[importError,setImportError]=useState("");
   const[importSuccess,setImportSuccess]=useState("");
   const[showBug,setShowBug]=useState(false);
@@ -1506,13 +1676,13 @@ function App(){
 
   // Supabase scenario storage
   function sbRow(r){return{key:r.id,name:r.name,...r.data,created:new Date(r.created_at).getTime(),modified:new Date(r.updated_at||r.created_at).getTime()};}
-  function sbSharedRow(r){return{key:r.scenario_key,name:r.name,owner:r.owner,publishedAt:r.published_at?new Date(r.published_at).getTime():Date.now(),...r.data,source:"published"};}
+  function sbSharedRow(r){return{...r.data,key:r.scenario_key,name:r.name,owner:r.owner,publishedAt:r.published_at?new Date(r.published_at).getTime():Date.now(),source:"published"};}
   async function loadScenarios(){
     setScenariosLoading(true);
     try{const{data,error}=await sbClient.from('scenarios').select('*').order('created_at',{ascending:false});
       if(error)throw error;
       setScenarios((data||[]).map(sbRow));
-    }catch(e){setScenarios([]);}
+    }catch(e){setScenarios([]);setSaveError("Failed to load saved scenarios. Try refreshing.");}
     finally{setScenariosLoading(false);}
   }
   useEffect(()=>{loadScenarios();},[]);
@@ -1551,13 +1721,13 @@ function App(){
     setCompareView(false);
     const isSaved=sc.source!=="published";
     setLoadedScenarioKey(isSaved?sc.key:null);
-    if(isSaved)setCompareIds(prev=>{const next=new Set(prev);if(next.size<5)next.add(sc.key);return next;});
+    if(isSaved&&compareIds.size<5){const next=new Set(compareIds);next.add(sc.key);setCompareIds(next);showCompareBar();}
   }
   async function deleteScenario(key){
     const{error}=await sbClient.from('scenarios').delete().eq('id',key);
     if(error){setSaveError("Failed to delete. Try again.");return;}
     setScenarios(prev=>prev.filter(s=>s.key!==key));
-    setCompareIds(prev=>{const next=new Set(prev);next.delete(key);return next;});
+    {const next=new Set(compareIds);next.delete(key);setCompareIds(next);if(next.size===0)hideCompareBar();}
     setLoadedScenarioKey(prev=>prev===key?null:prev);
   }
   async function duplicateScenario(sc,newName){
@@ -1575,7 +1745,6 @@ function App(){
     const{error}=await sbClient.from('scenarios').update({name:newName,updated_at:new Date().toISOString()}).eq('id',key);
     if(error){setSaveError("Failed to rename. Try again.");return;}
     setScenarios(prev=>prev.map(s=>s.key===key?{...s,name:newName,modified:Date.now()}:s));
-    setSaveError("");
   }
 
   // ── Shared scenarios (Supabase shared_scenarios table) ─────────────────────
@@ -1584,7 +1753,7 @@ function App(){
     try{const{data,error}=await sbClient.from('shared_scenarios').select('*').order('published_at',{ascending:false});
       if(error)throw error;
       setSharedScenarios((data||[]).map(sbSharedRow));
-    }catch(e){setSharedScenarios([]);}
+    }catch(e){setSharedScenarios([]);setShareError("Failed to load published scenarios. Try refreshing.");}
     finally{setSharedLoading(false);}
   }
   useEffect(()=>{loadSharedScenarios();},[]);
@@ -1592,7 +1761,8 @@ function App(){
     if(!currentUser){setShareError("Set a display name first (click ✏️ in the Saved & Published section).");return;}
     setShareError("");
     const{key:_k,name,created:_c,modified:_m,source:_s,...dataPayload}=sc;
-    const{data:existing}=await sbClient.from('shared_scenarios').select('id').eq('scenario_key',sc.key).eq('owner',currentUser).maybeSingle();
+    const{data:existing,error:lookupErr}=await sbClient.from('shared_scenarios').select('id').eq('scenario_key',sc.key).eq('owner',currentUser).maybeSingle();
+    if(lookupErr){setShareError("Publish failed. Try again.");return;}
     if(existing){
       const{error}=await sbClient.from('shared_scenarios').update({name,data:dataPayload,published_at:new Date().toISOString()}).eq('id',existing.id);
       if(error){setShareError("Publish failed. Try again.");return;}
@@ -1609,21 +1779,78 @@ function App(){
     if(error){setShareError("Unpublish failed. Try again.");return;}
     await loadSharedScenarios();
   }
+  async function bulkDeleteScenarios(keys){
+    const arr=[...keys];
+    const{error}=await sbClient.from('scenarios').delete().in('id',arr);
+    if(error){setSaveError("Failed to delete. Try again.");return;}
+    setScenarios(prev=>prev.filter(s=>!keys.has(s.key)));
+    {const next=new Set(compareIds);arr.forEach(k=>next.delete(k));setCompareIds(next);if(next.size===0)hideCompareBar();}
+    setLoadedScenarioKey(prev=>keys.has(prev)?null:prev);
+  }
+  async function bulkPublishScenarios(scs){
+    if(!currentUser||!scs.length)return;
+    setShareError("");
+    try{
+      await Promise.all(scs.map(async sc=>{
+        const{key:_k,name,created:_c,modified:_m,source:_s,...dataPayload}=sc;
+        const{data:existing,error:lookupErr}=await sbClient.from('shared_scenarios').select('id').eq('scenario_key',sc.key).eq('owner',currentUser).maybeSingle();
+        if(lookupErr)throw lookupErr;
+        if(existing){
+          await sbClient.from('shared_scenarios').update({name,data:dataPayload,published_at:new Date().toISOString()}).eq('id',existing.id);
+        }else{
+          await sbClient.from('shared_scenarios').insert({scenario_key:sc.key,name,owner:currentUser,data:dataPayload});
+        }
+      }));
+    }catch(e){setShareError("Bulk publish failed. Try again.");return;}
+    await loadSharedScenarios();
+  }
+  async function bulkUnpublishScenarios(scs){
+    if(!currentUser||!scs.length)return;
+    setShareError("");
+    const keys=scs.map(s=>s.key);
+    const{error}=await sbClient.from('shared_scenarios').delete().eq('owner',currentUser).in('scenario_key',keys);
+    if(error){setShareError("Bulk unpublish failed. Try again.");return;}
+    await loadSharedScenarios();
+  }
+  async function duplicatePublishedScenario(sc){
+    let name="Copy of "+sc.name;
+    const taken=new Set(scenarios.map(s=>s.name));
+    let n=2;while(taken.has(name))name="Copy of "+sc.name+" ("+n++ +")";
+    await duplicateScenario(sc,name);
+  }
+  async function renameSharedScenario(sc,newName){
+    if(!currentUser||sc.owner!==currentUser)return;
+    setShareError("");
+    const{error}=await sbClient.from('shared_scenarios').update({name:newName}).eq('scenario_key',sc.key).eq('owner',currentUser);
+    if(error){setShareError("Rename failed. Try again.");return;}
+    await loadSharedScenarios();
+  }
 
   function handleImportFile(e){
     const file=e.target.files?.[0];if(!file)return;
     setImportError("");setImportSuccess("");
+    const rawName=file.name.replace(/\.csv$/i,"").trim()||"Imported";
     const reader=new FileReader();
-    reader.onload=evt=>{
+    reader.onload=async evt=>{
       try{
         const result=importCSV(evt.target.result,initSnap);
         if(!result){setImportError("Could not parse CSV.");return;}
         pushSnap(result.snap);setMode(result.mode||"forward");
         if(result.gran)setGran(result.gran);
-        setLoadedScenarioKey(null);
-        setImportSuccess("Imported!");setTimeout(()=>setImportSuccess(""),3000);
+        // auto-save using filename as scenario name (dedup with suffix if needed)
+        const existingNames=new Set(scenarios.map(s=>s.name));
+        let name=rawName;let suffix=2;
+        while(existingNames.has(name))name=`${rawName} (${suffix++})`;
+        const payload={...result.snap,anchor:toInp(result.snap.anchor),mode:result.mode||"forward",gran:result.gran||gran};
+        const{data,error}=await sbClient.from('scenarios').insert({name,data:payload}).select().single();
+        if(error){setImportError("Imported but failed to save. Try saving manually.");return;}
+        const saved=sbRow(data);
+        setScenarios(prev=>[saved,...prev]);
+        setLoadedScenarioKey(saved.key);
+        setImportSuccess(`Imported & saved as "${name}"`);setTimeout(()=>setImportSuccess(""),4000);
       }catch(err){setImportError("Import failed: "+err.message);}
     };
+    reader.onerror=()=>{setImportError("Could not read file.");};
     reader.readAsText(file);e.target.value="";
   }
 
@@ -1681,10 +1908,10 @@ function App(){
 
   function toggleFixed(which){
     if(which==="start"){
-      if(mode==="both"){setAnchor(addD(anchor,devDays));setMode("backward");}
+      if(mode==="both"||mode==="forward"){setAnchor(addD(anchor,devDays));setMode("backward");}
       else if(mode==="backward"){setAnchor(startDate);setMode("both");}
     } else {
-      if(mode==="both")setMode("forward");
+      if(mode==="both"||mode==="backward"){setAnchor(startDate);setMode("forward");}
       else if(mode==="forward")setMode("both");
     }
   }
@@ -1703,7 +1930,7 @@ function App(){
   const header=(
     <div style={{position:"sticky",top:0,zIndex:200,background:t.bg,display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:mob?8:12,marginLeft:mob?-10:-16,marginRight:mob?-10:-16,paddingLeft:mob?10:16,paddingRight:mob?10:16,paddingTop:mob?8:14,paddingBottom:mob?6:8,marginTop:mob?-8:-14,flexWrap:"wrap",gap:8,boxShadow:"0 1px 0 "+t.border}}>
       <div style={{display:"flex",alignItems:"center",gap:10}}>
-        {mode!=null&&!compareView&&<button onClick={()=>{setMode(null);setPendingCreate(null);setLoadedScenarioKey(null);}} title="Home" style={{padding:"6px 8px",borderRadius:6,border:"1px solid "+t.border,cursor:"pointer",background:t.btnBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><HouseIcon sz={17} c={t.btnText}/></button>}
+        {mode!=null&&!compareView&&<button onClick={()=>{setMode(null);setPendingCreate(null);setLoadedScenarioKey(null);clearCompareIds();}} title="Home" style={{padding:"6px 8px",borderRadius:6,border:"1px solid "+t.border,cursor:"pointer",background:t.btnBg,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><HouseIcon sz={17} c={t.btnText}/></button>}
         <div>
           <div style={{fontSize:mob?15:18,fontWeight:800,letterSpacing:0.3}}>Project Timeline Tool</div>
           {!mob&&<div style={{fontSize:13,color:t.textMuted,marginTop:3,display:"flex",alignItems:"center",gap:5}}>Created by Oliver Lewis + <svg width={14} height={14} viewBox="0 0 248 248" fill="none" style={{display:"inline-block",flexShrink:0}}><path d="M52.4285 162.873L98.7844 136.879L99.5485 134.602L98.7844 133.334H96.4921L88.7237 132.862L62.2346 132.153L39.3113 131.207L17.0249 130.026L11.4214 128.844L6.2 121.873L6.7094 118.447L11.4214 115.257L18.171 115.847L33.0711 116.911L55.485 118.447L71.6586 119.392L95.728 121.873H99.5485L100.058 120.337L98.7844 119.392L97.7656 118.447L74.5877 102.732L49.4995 86.1905L36.3823 76.62L29.3779 71.7757L25.8121 67.2858L24.2839 57.3608L30.6515 50.2716L39.3113 50.8623L41.4763 51.4531L50.2636 58.1879L68.9842 72.7209L93.4357 90.6804L97.0015 93.6343L98.4374 92.6652L98.6571 91.9801L97.0015 89.2625L83.757 65.2772L69.621 40.8192L63.2534 30.6579L61.5978 24.632C60.9565 22.1032 60.579 20.0111 60.579 17.4246L67.8381 7.49965L71.9133 6.19995L81.7193 7.49965L85.7946 11.0443L91.9074 24.9865L101.714 46.8451L116.996 76.62L121.453 85.4816L123.873 93.6343L124.764 96.1155H126.292V94.6976L127.566 77.9197L129.858 57.3608L132.15 30.8942L132.915 23.4505L136.608 14.4708L143.994 9.62643L149.725 12.344L154.437 19.0788L153.8 23.4505L150.998 41.6463L145.522 70.1215L141.957 89.2625H143.994L146.414 86.7813L156.093 74.0206L172.266 53.698L179.398 45.6635L187.803 36.802L193.152 32.5484H203.34L210.726 43.6549L207.415 55.1159L196.972 68.3492L188.312 79.5739L175.896 96.2095L168.191 109.585L168.882 110.689L170.738 110.53L198.755 104.504L213.91 101.787L231.994 98.7149L240.144 102.496L241.036 106.395L237.852 114.311L218.495 119.037L195.826 123.645L162.07 131.592L161.696 131.893L162.137 132.547L177.36 133.925L183.855 134.279H199.774L229.447 136.524L237.215 141.605L241.8 147.867L241.036 152.711L229.065 158.737L213.019 154.956L175.45 145.977L162.587 142.787H160.805V143.85L171.502 154.366L191.242 172.089L215.82 195.011L217.094 200.682L213.91 205.172L210.599 204.699L188.949 188.394L180.544 181.069L161.696 165.118H160.422V166.772L164.752 173.152L187.803 207.771L188.949 218.405L187.294 221.832L181.308 223.959L174.813 222.777L161.187 203.754L147.305 182.486L136.098 163.345L134.745 164.2L128.075 235.42L125.019 239.082L117.887 241.8L111.902 237.31L108.718 229.984L111.902 215.452L115.722 196.547L118.779 181.541L121.58 162.873L123.291 156.636L123.14 156.219L121.773 156.449L107.699 175.752L86.304 204.699L69.3663 222.777L65.291 224.431L58.2867 220.768L58.9235 214.27L62.8713 208.48L86.304 178.705L100.44 160.155L109.551 149.507L109.462 147.967L108.959 147.924L46.6977 188.512L35.6182 189.93L30.7788 185.44L31.4156 178.115L33.7079 175.752L52.4285 162.873Z" fill="#D97757"/></svg></div>}
@@ -1730,13 +1957,34 @@ function App(){
             <button key={item.lbl} onClick={()=>setDark(item.v)} style={{padding:"5px 11px",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:5,fontSize:13,fontWeight:600,background:isDark===item.v?t.btnAct:t.btnBg,color:isDark===item.v?"#fff":t.btnText,transition:"background 0.15s"}}>{item.icon}{!mob&&item.lbl}</button>
           ))}
         </div>
+        <button onClick={()=>sbClient.auth.signOut()} title={"Signed in as "+currentUser}
+          style={{padding:"5px 10px",borderRadius:5,border:"1px solid "+t.border,cursor:"pointer",fontSize:12,fontWeight:600,background:t.btnBg,color:t.textMuted,display:"flex",alignItems:"center",gap:5,flexShrink:0,transition:"background 0.15s"}}
+          onMouseEnter={e=>{e.currentTarget.style.background=isDark?"#2a1a1a":"#fff4f4";e.currentTarget.style.color=t.dangerText;}}
+          onMouseLeave={e=>{e.currentTarget.style.background=t.btnBg;e.currentTarget.style.color=t.textMuted;}}>
+          {!mob&&<span style={{maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{currentUser.split("@")[0]}</span>}
+          <span title="Sign out">⎋</span>
+        </button>
       </div>
     </div>
   );
 
+  if(authLoading)return null;
+  if(!session)return<SignInScreen isDark={isDark} setDark={setDark} t={t}/>;
+
   return(
     <div className="theme-fade" style={{background:t.bg,color:t.text,fontFamily:"Inter,system-ui,sans-serif",minHeight:"100vh",padding:mob?"0 10px 8px":"0 16px 16px",userSelect:"none",boxSizing:"border-box"}}>
-      <input ref={importInputRef} type="file" accept=".csv" style={{display:"none"}} onChange={handleImportFile}/>
+      <input ref={importInputRef} type="file" accept=".csv" aria-hidden="true" tabIndex={-1} style={{display:"none"}} onChange={handleImportFile}/>
+      {compareMenuPos&&(<>
+        <div style={{position:"fixed",inset:0,zIndex:1998}} onMouseDown={()=>setCompareMenuPos(null)}/>
+        <div style={{position:"fixed",left:Math.max(4,compareMenuPos.x-190),top:compareMenuPos.y,zIndex:1999,background:t.panel,border:"1px solid "+t.border,borderRadius:6,boxShadow:"0 4px 20px rgba(0,0,0,0.22)",minWidth:170,padding:"4px 0",overflow:"hidden"}}>
+          {compareUnpublishedScs.length>0&&<button onMouseDown={()=>{bulkPublishScenarios(compareUnpublishedScs);setCompareMenuPos(null);}} style={{fontSize:13,color:t.text,cursor:"pointer",padding:"7px 16px",background:"transparent",border:"none",textAlign:"left",width:"100%",display:"block",whiteSpace:"nowrap",fontWeight:500}}>Publish {compareUnpublishedScs.length}</button>}
+          {comparePublishedScs.length>0&&<button onMouseDown={()=>{bulkUnpublishScenarios(comparePublishedScs);setCompareMenuPos(null);}} style={{fontSize:13,color:t.text,cursor:"pointer",padding:"7px 16px",background:"transparent",border:"none",textAlign:"left",width:"100%",display:"block",whiteSpace:"nowrap",fontWeight:500}}>Unpublish {comparePublishedScs.length}</button>}
+          {compareInMineScs.length>0&&<>
+            <div style={{height:1,background:t.border,margin:"4px 0"}}/>
+            <button onMouseDown={()=>{setConfirmDelBar(true);setCompareMenuPos(null);}} style={{fontSize:13,color:t.dangerText,cursor:"pointer",padding:"7px 16px",background:"transparent",border:"none",textAlign:"left",width:"100%",display:"block",whiteSpace:"nowrap",fontWeight:700}}>Delete {compareInMineScs.length}</button>
+          </>}
+        </div>
+      </>)}
       {showBug&&<BugModal t={t} isDark={isDark} onClose={()=>setShowBug(false)}/>}
       {header}
       {mob&&portrait&&<div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:8,padding:"7px 12px",marginTop:14,marginBottom:10,background:isDark?"rgba(255,255,255,0.05)":"rgba(0,0,0,0.04)",borderRadius:6,border:"1px solid "+t.border,fontSize:12,color:t.textMuted}}>
@@ -1747,14 +1995,14 @@ function App(){
         <CompareView selected={compareSelected} compareAlign={compareAlign} setCompareAlign={setCompareAlign}
           hiddenRows={compareHiddenRows} toggleRow={toggleCompareRow}
           todayDate={todayDate} showTodayLine={showTodayLine} toggleTodayLine={()=>setShowTodayLine(v=>!v)}
-          t={t} isDark={isDark} onBack={()=>setCompareView(false)}
+          t={t} isDark={isDark} onBack={()=>{setCompareView(false);clearCompareIds();}}
           scenarios={scenarios} scenariosLoading={scenariosLoading}
           saveError={saveError} setSaveError={setSaveError} scenarioName={scenarioName} setScenarioName={setScName}
           onSave={saveScenario} onOverwrite={overwriteScenario} onRestore={restoreScenario}
           onDelete={deleteScenario} onRename={renameScenario} onDuplicate={duplicateScenario}
           onRefresh={loadScenarios} onPublish={publishScenario} publishedKeys={myPublishedKeys}
           sharedScenarios={sharedScenarios} sharedLoading={sharedLoading}
-          shareError={shareError} onUnpublish={unpublishScenario} onRefreshShared={loadSharedScenarios}
+          shareError={shareError} onUnpublish={unpublishScenario} onDuplicateShared={duplicatePublishedScenario} onRenameShared={renameSharedScenario} onRefreshShared={loadSharedScenarios}
           currentUser={currentUser} compareIds={compareIds} onToggleCompare={toggleCompare}
           loadedScenarioKey={loadedScenarioKey}/>
       ):mode==null?(
@@ -1779,24 +2027,25 @@ function App(){
               <div style={{fontSize:18,fontWeight:700,color:t.text,marginBottom:6}}>How would you like to schedule this program?</div>
               <div style={{fontSize:14,color:t.textMuted}}>Choose a direction, import a CSV, or load a saved scenario below.</div>
             </div>
-            <div style={{display:"flex",gap:14,flexWrap:"wrap",justifyContent:"center"}}>
-              {[{m:"forward",arrow:"⚓",title:"Fixed Start",sub:"Pin a start date,\nSOP floats with duration",a:defaultStartDate},{m:"backward",arrow:"⚓",title:"Fixed SOP",sub:"Pin a target SOP date,\nstart date floats with duration",a:defaultSop},{m:"both",arrow:"📌 📌",title:"Fix Both",sub:"Fix start AND SOP;\nphase durations adjust",a:defaultStartDate}].map(item=>(
-                <button key={item.m} onClick={()=>{setMode(item.m);setAnchor(item.a);}}
-                  style={{background:t.cardBg,border:"2px solid "+t.cardBorder,borderRadius:10,padding:mob?"16px 20px":"22px 30px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:10,minWidth:mob?undefined:190,width:mob?"100%":undefined,transition:"border-color 0.15s,background 0.15s"}}
+            <div style={{display:"flex",gap:14,flexWrap:"wrap",justifyContent:"center",alignItems:"stretch"}}>
+              {[{m:"forward",arrow:"📌 ➡️",title:"Fixed Start",sub:"Specify the start date;\nStart of Production floats",a:defaultStartDate},{m:"backward",arrow:"📌 🎯",title:"Fixed SOP",sub:"Specify Start of Production;\nstart date floats",a:defaultSop},{m:"both",arrow:"📌 📌",title:"Fix Both",sub:"Fix start AND SOP;\nphase durations adjust",a:defaultStartDate}].map(item=>(
+                <button key={item.m} onClick={()=>{setMode(item.m);setAnchor(item.a);setCompareView(false);setLoadedScenarioKey(null);}}
+                  style={{background:t.cardBg,border:"1px solid "+t.cardBorder,borderRadius:10,padding:mob?"12px 14px":"12px 10px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:6,flex:mob?undefined:1,width:mob?"100%":undefined,transition:"border-color 0.15s,background 0.15s"}}
                   onMouseEnter={e=>{e.currentTarget.style.borderColor="#1e60a5";e.currentTarget.style.background=t.cardHov;}}
                   onMouseLeave={e=>{e.currentTarget.style.borderColor=t.cardBorder;e.currentTarget.style.background=t.cardBg;}}>
-                  <div style={{fontSize:34,color:"#3a7ad0",lineHeight:1}}>{item.arrow}</div>
-                  <div style={{fontSize:16,fontWeight:700,color:t.text}}>{item.title}</div>
-                  <div style={{fontSize:13,color:t.textMuted,textAlign:"center",lineHeight:1.6,whiteSpace:"pre-line"}}>{item.sub}</div>
+                  <div style={{fontSize:26,color:"#3a7ad0",lineHeight:1}}>{item.arrow}</div>
+                  <div style={{fontSize:15,fontWeight:700,color:t.text}}>{item.title}</div>
+                  <div style={{fontSize:12,color:t.textMuted,textAlign:"center",lineHeight:1.5,whiteSpace:"pre-line"}}>{item.sub}</div>
                 </button>
               ))}
+              {!mob&&<div style={{width:1,background:t.border,alignSelf:"stretch",margin:"0 4px"}}/>}
               <button onClick={()=>importInputRef.current?.click()}
-                style={{background:t.cardBg,border:"2px solid "+t.cardBorder,borderRadius:10,padding:mob?"16px 20px":"22px 30px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:10,minWidth:mob?undefined:190,width:mob?"100%":undefined,transition:"border-color 0.15s,background 0.15s"}}
+                style={{background:t.cardBg,border:"1px solid "+t.cardBorder,borderRadius:10,padding:mob?"12px 14px":"12px 10px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:6,flex:mob?undefined:1,width:mob?"100%":undefined,transition:"border-color 0.15s,background 0.15s"}}
                 onMouseEnter={e=>{e.currentTarget.style.borderColor="#1e60a5";e.currentTarget.style.background=t.cardHov;}}
                 onMouseLeave={e=>{e.currentTarget.style.borderColor=t.cardBorder;e.currentTarget.style.background=t.cardBg;}}>
-                <div style={{fontSize:34,color:"#3a7ad0",lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}><UploadIcon sz={34} c="#3a7ad0"/></div>
-                <div style={{fontSize:16,fontWeight:700,color:t.text}}>Import CSV</div>
-                <div style={{fontSize:13,color:t.textMuted,textAlign:"center",lineHeight:1.6}}>Load a previously exported timeline CSV</div>
+                <div style={{fontSize:26,color:"#3a7ad0",lineHeight:1,display:"flex",alignItems:"center",justifyContent:"center"}}><UploadIcon sz={26} c="#3a7ad0"/></div>
+                <div style={{fontSize:15,fontWeight:700,color:t.text}}>Import CSV</div>
+                <div style={{fontSize:12,color:t.textMuted,textAlign:"center",lineHeight:1.5}}>Load a previously exported timeline CSV</div>
               </button>
             </div>
             {importError&&<div style={{marginTop:14,fontSize:13,color:t.dangerText,background:isDark?t.dangerBg:"#fff4f4",border:"1px solid "+t.dangerText,borderRadius:6,padding:"8px 14px",textAlign:"center"}}>{importError}</div>}
@@ -1806,43 +2055,35 @@ function App(){
           <div style={{width:"100%",maxWidth:800}}>
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}><div style={{flex:1,height:1,background:t.border}}/><span style={{fontSize:13,color:t.textMuted,whiteSpace:"nowrap"}}>Saved & Published Scenarios</span><div style={{flex:1,height:1,background:t.border}}/></div>
             {/* Compare banner */}
-            {compareIds.size>=2&&(
+            {compareBarShown&&(
+              <div key={compareBarExiting?"exit":"enter"} style={{overflow:"hidden",animation:compareBarExiting?"compareBarOut 320ms ease-in forwards":"compareBarIn 450ms ease-out"}} onAnimationEnd={e=>{if(compareBarExiting){setCompareBarShown(false);setCompareBarExiting(false);compareBarWasShown.current=false;}}}>
+
               <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:isDark?"#0e1e35":"#eef4ff",border:"2px solid #3b82f6",borderRadius:7,padding:"10px 14px",marginBottom:12,gap:12,flexWrap:"wrap"}}>
                 <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",minWidth:0}}>
-                  <button onClick={()=>setCompareIds(new Set())} title="Clear selection"
+                  <button onClick={()=>{clearCompareIds();setConfirmDelBar(false);}} title="Clear selection"
                     style={{background:"none",border:"none",cursor:"pointer",fontSize:18,color:t.textMuted,padding:"0 2px",lineHeight:1,flexShrink:0}}>×</button>
-                  <span style={{fontSize:13,color:t.text,fontWeight:600,flexShrink:0}}>{compareIds.size} selected</span>
+                  <span style={{fontSize:13,color:t.text,fontWeight:600,flexShrink:0}}>{compareDisplayIds.current.size} selected</span>
                   <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                    {[...compareIds].map((id,i)=>{
+                    {[...compareDisplayIds.current].map((id,i)=>{
                       const sc=[...scenarios,...sharedScenarios].find(s=>s.key===id);
                       return sc?<span key={id} style={{fontSize:11,background:COMPARE_ACCENTS[i]+"22",color:COMPARE_ACCENTS[i],border:"1px solid "+COMPARE_ACCENTS[i]+"55",borderRadius:4,padding:"1px 7px",fontWeight:700,maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sc.name}</span>:null;
                     })}
                   </div>
                 </div>
-                <button onClick={()=>setCompareView(true)}
-                  style={{padding:"7px 20px",borderRadius:5,border:"none",cursor:"pointer",fontWeight:700,fontSize:13,background:"#3b82f6",color:"#fff",flexShrink:0,display:"flex",alignItems:"center",gap:5}}>
-                  Compare <span style={{fontSize:15,lineHeight:1}}>›</span>
-                </button>
+                <div style={{display:"flex",gap:6,alignItems:"center",flexShrink:0}}>
+                  {confirmDelBar?(<>
+                    <span style={{fontSize:12,color:t.dangerText,fontWeight:600,whiteSpace:"nowrap"}}>Delete {compareInMineScs.length} scenario{compareInMineScs.length!==1?"s":""}?</span>
+                    <button onClick={()=>{bulkDeleteScenarios(new Set(compareInMineScs.map(s=>s.key)));setConfirmDelBar(false);}} style={{padding:"5px 12px",borderRadius:5,border:"none",cursor:"pointer",fontWeight:700,fontSize:12,background:t.dangerText,color:"#fff"}}>Confirm</button>
+                    <button onClick={()=>setConfirmDelBar(false)} style={{padding:"5px 12px",borderRadius:5,border:"1px solid "+t.border,cursor:"pointer",fontWeight:600,fontSize:12,background:t.btnBg,color:t.btnText}}>Cancel</button>
+                  </>):(<>
+                    {compareDisplayIds.current.size>=2&&<button onClick={()=>setCompareView(true)} style={{padding:"5px 16px",borderRadius:5,border:"none",cursor:"pointer",fontWeight:700,fontSize:13,background:"#3b82f6",color:"#fff",flexShrink:0,display:"flex",alignItems:"center",gap:5}}>Compare <span style={{fontSize:15,lineHeight:1}}>›</span></button>}
+                    {scenarios.some(s=>compareDisplayIds.current.has(s.key))&&<button onClick={e=>{const r=e.currentTarget.getBoundingClientRect();setCompareMenuPos({x:r.right,y:r.bottom+4});}} style={{padding:"5px 10px",borderRadius:5,border:"1px solid "+t.border,cursor:"pointer",fontWeight:700,fontSize:13,background:t.btnBg,color:t.btnText,display:"inline-flex",alignItems:"center",lineHeight:1}}>⋮</button>}
+                  </>)}
+                </div>
+              </div>
               </div>
             )}
-            {/* Display name (used for publishing) */}
-            <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10,fontSize:12,color:t.textDim}}>
-              <span style={{fontWeight:600}}>Your display name:</span>
-              {userNameEditing?(
-                <form onSubmit={e=>{e.preventDefault();const v=userNameDraft.trim();localStorage.setItem('tlUserName',v);setCurrentUser(v);setUserNameEditing(false);}} style={{display:"flex",gap:5,alignItems:"center"}}>
-                  <input autoFocus value={userNameDraft} onChange={e=>setUserNameDraft(e.target.value)} placeholder="e.g. your name"
-                    style={{padding:"2px 7px",borderRadius:3,border:"1px solid "+t.border,fontSize:12,background:t.inBg,color:t.inText,outline:"none",width:140}}/>
-                  <button type="submit" style={{padding:"2px 8px",borderRadius:3,border:"1px solid "+t.border,cursor:"pointer",fontSize:11,fontWeight:700,background:t.btnAct,color:"#fff"}}>Save</button>
-                  <button type="button" onClick={()=>{setUserNameDraft(currentUser);setUserNameEditing(false);}} style={{padding:"2px 8px",borderRadius:3,border:"1px solid "+t.border,cursor:"pointer",fontSize:11,background:t.btnBg,color:t.btnText}}>Cancel</button>
-                </form>
-              ):(
-                <span style={{display:"flex",alignItems:"center",gap:5}}>
-                  <span style={{color:currentUser?t.text:t.textDim,fontStyle:currentUser?"normal":"italic"}}>{currentUser||"(not set)"}</span>
-                  <button onClick={()=>{setUserNameDraft(currentUser);setUserNameEditing(true);}} title="Edit display name" style={{background:"none",border:"none",cursor:"pointer",fontSize:12,color:t.textDim,padding:"0 2px"}}>✏️</button>
-                </span>
-              )}
-              {shareError&&<span style={{fontSize:11,color:t.dangerText,marginLeft:8}}>{shareError}</span>}
-            </div>
+            {shareError&&<div style={{fontSize:12,color:t.dangerText,marginBottom:10,background:isDark?t.dangerBg:"#fff4f4",padding:"6px 12px",borderRadius:5,border:"1px solid "+t.dangerText}}>{shareError}</div>}
             <ScenarioTable scenarios={scenarios} loading={scenariosLoading} saveError={saveError} setSaveError={setSaveError}
               scenarioName={scenarioName} setScenarioName={setScName}
               onSave={saveScenario} onOverwrite={overwriteScenario} onRefresh={loadScenarios}
@@ -1852,7 +2093,7 @@ function App(){
               compareIds={compareIds} onToggleCompare={toggleCompare}
               loadedKey={loadedScenarioKey} t={t} isDark={isDark} showSaveForm={false}/>
             <SharedScenarioTable sharedScenarios={sharedScenarios} loading={sharedLoading} shareError={shareError}
-              currentUser={currentUser} onRestore={restoreScenario} onUnpublish={unpublishScenario}
+              currentUser={currentUser} onRestore={restoreScenario} onUnpublish={unpublishScenario} onDuplicate={duplicatePublishedScenario} onRenameShared={renameSharedScenario}
               onRefresh={loadSharedScenarios} compareIds={compareIds} onToggleCompare={toggleCompare}
               t={t} isDark={isDark}/>
           </div>
@@ -1987,16 +2228,28 @@ function App(){
             </>}
           </div>
 
-          {compareIds.size>=2&&(
+          {compareBarShown&&(
+            <div key={compareBarExiting?"exit":"enter"} style={{overflow:"hidden",animation:compareBarExiting?"compareBarOut 320ms ease-in forwards":"compareBarIn 450ms ease-out"}} onAnimationEnd={e=>{if(compareBarExiting){setCompareBarShown(false);setCompareBarExiting(false);compareBarWasShown.current=false;}}}>
+
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:isDark?"#0e1e35":"#eef4ff",border:"2px solid #3b82f6",borderRadius:7,padding:"10px 14px",marginBottom:12,gap:12,flexWrap:"wrap"}}>
               <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap",minWidth:0}}>
-                <button onClick={()=>setCompareIds(new Set())} title="Clear selection" style={{background:"none",border:"none",cursor:"pointer",fontSize:18,color:t.textMuted,padding:"0 2px",lineHeight:1,flexShrink:0}}>×</button>
-                <span style={{fontSize:13,color:t.text,fontWeight:600,flexShrink:0}}>{compareIds.size} selected</span>
+                <button onClick={()=>{clearCompareIds();setConfirmDelBar(false);}} title="Clear selection" style={{background:"none",border:"none",cursor:"pointer",fontSize:18,color:t.textMuted,padding:"0 2px",lineHeight:1,flexShrink:0}}>×</button>
+                <span style={{fontSize:13,color:t.text,fontWeight:600,flexShrink:0}}>{compareDisplayIds.current.size} selected</span>
                 <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-                  {[...compareIds].map((id,i)=>{const sc=[...scenarios,...sharedScenarios].find(s=>s.key===id);return sc?<span key={id} style={{fontSize:11,background:COMPARE_ACCENTS[i]+"22",color:COMPARE_ACCENTS[i],border:"1px solid "+COMPARE_ACCENTS[i]+"55",borderRadius:4,padding:"1px 7px",fontWeight:700,maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sc.name}</span>:null;})}
+                  {[...compareDisplayIds.current].map((id,i)=>{const sc=[...scenarios,...sharedScenarios].find(s=>s.key===id);return sc?<span key={id} style={{fontSize:11,background:COMPARE_ACCENTS[i]+"22",color:COMPARE_ACCENTS[i],border:"1px solid "+COMPARE_ACCENTS[i]+"55",borderRadius:4,padding:"1px 7px",fontWeight:700,maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sc.name}</span>:null;})}
                 </div>
               </div>
-              <button onClick={()=>setCompareView(true)} style={{padding:"7px 20px",borderRadius:5,border:"none",cursor:"pointer",fontWeight:700,fontSize:13,background:"#3b82f6",color:"#fff",flexShrink:0,display:"flex",alignItems:"center",gap:5}}>Compare <span style={{fontSize:15,lineHeight:1}}>›</span></button>
+              <div style={{display:"flex",gap:6,alignItems:"center",flexShrink:0}}>
+                {confirmDelBar?(<>
+                  <span style={{fontSize:12,color:t.dangerText,fontWeight:600,whiteSpace:"nowrap"}}>Delete {compareInMineScs.length} scenario{compareInMineScs.length!==1?"s":""}?</span>
+                  <button onClick={()=>{bulkDeleteScenarios(new Set(compareInMineScs.map(s=>s.key)));setConfirmDelBar(false);}} style={{padding:"5px 12px",borderRadius:5,border:"none",cursor:"pointer",fontWeight:700,fontSize:12,background:t.dangerText,color:"#fff"}}>Confirm</button>
+                  <button onClick={()=>setConfirmDelBar(false)} style={{padding:"5px 12px",borderRadius:5,border:"1px solid "+t.border,cursor:"pointer",fontWeight:600,fontSize:12,background:t.btnBg,color:t.btnText}}>Cancel</button>
+                </>):(<>
+                  {compareDisplayIds.current.size>=2&&<button onClick={()=>setCompareView(true)} style={{padding:"5px 16px",borderRadius:5,border:"none",cursor:"pointer",fontWeight:700,fontSize:13,background:"#3b82f6",color:"#fff",flexShrink:0,display:"flex",alignItems:"center",gap:5}}>Compare <span style={{fontSize:15,lineHeight:1}}>›</span></button>}
+                  {scenarios.some(s=>compareDisplayIds.current.has(s.key))&&<button onClick={e=>{const r=e.currentTarget.getBoundingClientRect();setCompareMenuPos({x:r.right,y:r.bottom+4});}} style={{padding:"5px 10px",borderRadius:5,border:"1px solid "+t.border,cursor:"pointer",fontWeight:700,fontSize:13,background:t.btnBg,color:t.btnText,display:"inline-flex",alignItems:"center",lineHeight:1}}>⋮</button>}
+                </>)}
+              </div>
+            </div>
             </div>
           )}
           <ScenarioTable scenarios={scenarios} loading={scenariosLoading} saveError={saveError} setSaveError={setSaveError}
@@ -2007,7 +2260,7 @@ function App(){
             compareIds={compareIds} onToggleCompare={toggleCompare}
             loadedKey={loadedScenarioKey} t={t} isDark={isDark} showSaveForm={true}/>
           <SharedScenarioTable sharedScenarios={sharedScenarios} loading={sharedLoading} shareError={shareError}
-            currentUser={currentUser} onRestore={restoreScenario} onUnpublish={unpublishScenario}
+            currentUser={currentUser} onRestore={restoreScenario} onUnpublish={unpublishScenario} onDuplicate={duplicatePublishedScenario} onRenameShared={renameSharedScenario}
             onRefresh={loadSharedScenarios} compareIds={compareIds} onToggleCompare={toggleCompare}
             t={t} isDark={isDark}/>
         </div>
@@ -2327,7 +2580,7 @@ function PhaseBlock({phase,idx,p,dspDevFrac,t,devPhaseStart,devPhaseEnd,devDays,
       {completed&&<div style={{position:"absolute",top:4,right:4,zIndex:30,width:14,height:14,borderRadius:"50%",background:"#27ae60",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 1px 4px rgba(0,0,0,0.35)"}}>
         <svg width={9} height={9} viewBox="0 0 9 9"><polyline points="1.5,4.5 3.5,6.5 7.5,2" stroke="#fff" strokeWidth={1.8} fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg>
       </div>}
-      {onDragStart&&<div onMouseDown={onDragStart} style={{position:"absolute",right:0,top:0,bottom:0,width:10,cursor:"ew-resize",zIndex:25}}/>}
+      {onDragStart&&<div onMouseDown={e=>{if(e.button===0)onDragStart(e);}} style={{position:"absolute",right:0,top:0,bottom:0,width:10,cursor:"ew-resize",zIndex:25}}/>}
       {hov&&!menuPos&&<PhaseTooltip phase={phase} idx={idx} startDate={devPhaseStart(idx)} endDate={devPhaseEnd(idx)} pct={p} devDays={devDays} t={t} completed={completed} hasOptions={!!onToggleComplete} anchorRect={hovRect}/>}
       {menuPos&&ReactDOM.createPortal(
         <>
