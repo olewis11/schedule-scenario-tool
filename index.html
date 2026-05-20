@@ -1524,7 +1524,8 @@ function App(){
   const[newDisplayName,setNewDisplayName]=useState("");
   const[userMenuError,setUserMenuError]=useState("");
   const[userMenuSaving,setUserMenuSaving]=useState(false);
-  const userMenuRef=useRef(null);
+  const[userMenuPos,setUserMenuPos]=useState({top:0,right:0});
+  const triggerRef=useRef(null);
   const[sharedScenarios,setSharedScenarios]=useState([]);
   const[sharedLoading,setSharedLoading]=useState(true);
   const[shareError,setShareError]=useState("");
@@ -1563,12 +1564,6 @@ function App(){
     const{data:{subscription}}=sbClient.auth.onAuthStateChange((_event,session)=>{setSession(session);setAuthLoading(false);});
     return()=>subscription.unsubscribe();
   },[]);
-  useEffect(()=>{
-    if(!userMenuOpen)return;
-    function handleClick(e){if(userMenuRef.current&&!userMenuRef.current.contains(e.target)){setUserMenuOpen(false);setConfirmSignOut(false);setRenamingUser(false);setUserMenuError("");}}
-    document.addEventListener("mousedown",handleClick);
-    return()=>document.removeEventListener("mousedown",handleClick);
-  },[userMenuOpen]);
   const[importError,setImportError]=useState("");
   const[importSuccess,setImportSuccess]=useState("");
   const[showBug,setShowBug]=useState(false);
@@ -2015,64 +2010,76 @@ function App(){
             <button key={item.lbl} onClick={()=>setDark(item.v)} style={{padding:"5px 11px",border:"none",cursor:"pointer",display:"flex",alignItems:"center",gap:5,fontSize:13,fontWeight:600,background:isDark===item.v?t.btnAct:t.btnBg,color:isDark===item.v?"#fff":t.btnText,transition:"background 0.15s"}}>{item.icon}{!mob&&item.lbl}</button>
           ))}
         </div>
-        <div ref={userMenuRef} style={{position:"relative",flexShrink:0}}>
-          <button onClick={()=>{if(!userMenuOpen){setConfirmSignOut(false);setRenamingUser(false);setNewDisplayName(displayName);setUserMenuError("");}setUserMenuOpen(o=>!o);}}
+        <div style={{flexShrink:0}}>
+          <button ref={triggerRef}
+            onClick={()=>{
+              if(!userMenuOpen){
+                const r=triggerRef.current.getBoundingClientRect();
+                setUserMenuPos({top:r.bottom+4,right:window.innerWidth-r.right});
+                setConfirmSignOut(false);setRenamingUser(false);setNewDisplayName(displayName);setUserMenuError("");
+              }
+              setUserMenuOpen(o=>!o);
+            }}
             title={"Signed in as "+currentUser}
             style={{padding:"5px 10px",borderRadius:5,border:"1px solid "+(userMenuOpen?t.btnAct:t.border),cursor:"pointer",fontSize:12,fontWeight:600,background:userMenuOpen?(isDark?"#1a2a3a":"#eaf3ff"):t.btnBg,color:userMenuOpen?t.btnAct:t.textMuted,display:"flex",alignItems:"center",gap:5,transition:"background 0.15s,color 0.15s,border-color 0.15s"}}>
             {!mob&&<span style={{maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{displayName}</span>}
             <span style={{fontSize:10,opacity:0.7}}>{userMenuOpen?"▲":"▼"}</span>
           </button>
-          {userMenuOpen&&(
-            <div style={{position:"absolute",right:0,top:"calc(100% + 4px)",zIndex:2100,background:t.panel,border:"1px solid "+t.border,borderRadius:8,boxShadow:"0 6px 24px rgba(0,0,0,0.18)",minWidth:200,padding:"6px 0",overflow:"hidden"}}>
-              <div style={{padding:"8px 14px 6px",borderBottom:"1px solid "+t.border,marginBottom:4}}>
-                <div style={{fontSize:11,color:t.textDim,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:2}}>Signed in as</div>
-                <div style={{fontSize:12,color:t.text,fontWeight:600,wordBreak:"break-all"}}>{currentUser}</div>
-              </div>
-              {renamingUser?(
-                <div style={{padding:"8px 12px"}}>
-                  <div style={{fontSize:11,color:t.textMuted,fontWeight:600,marginBottom:6}}>Display name</div>
-                  <input autoFocus value={newDisplayName} onChange={e=>{setNewDisplayName(e.target.value);setUserMenuError("");}}
-                    onKeyDown={e=>{if(e.key==="Enter")handleRenameUser();if(e.key==="Escape"){setRenamingUser(false);setNewDisplayName("");setUserMenuError("");}}}
-                    placeholder="Enter display name"
-                    style={{width:"100%",padding:"5px 8px",borderRadius:5,border:"1px solid "+(userMenuError?t.dangerText:t.btnAct),background:t.inBg,color:t.text,fontSize:12,outline:"none",boxSizing:"border-box",marginBottom:userMenuError?4:6}}/>
-                  {userMenuError&&<div style={{fontSize:11,color:t.dangerText,marginBottom:6}}>{userMenuError}</div>}
-                  <div style={{display:"flex",gap:6}}>
-                    <button onMouseDown={handleRenameUser} disabled={userMenuSaving}
-                      style={{flex:1,padding:"4px 0",borderRadius:5,border:"none",cursor:userMenuSaving?"default":"pointer",fontSize:12,fontWeight:700,background:userMenuSaving?t.textDim:t.btnAct,color:"#fff"}}>
-                      {userMenuSaving?"Saving…":"Save"}
+          {userMenuOpen&&ReactDOM.createPortal(
+            <>
+              <div style={{position:"fixed",inset:0,zIndex:2099}} onClick={()=>setUserMenuOpen(false)}/>
+              <div style={{position:"fixed",top:userMenuPos.top,right:userMenuPos.right,zIndex:2100,background:t.panel,border:"1px solid "+t.border,borderRadius:8,boxShadow:"0 6px 24px rgba(0,0,0,0.18)",minWidth:200,padding:"6px 0"}}>
+                <div style={{padding:"8px 14px 6px",borderBottom:"1px solid "+t.border,marginBottom:4}}>
+                  <div style={{fontSize:11,color:t.textDim,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.5px",marginBottom:2}}>Signed in as</div>
+                  <div style={{fontSize:12,color:t.text,fontWeight:600,wordBreak:"break-all"}}>{currentUser}</div>
+                </div>
+                {renamingUser?(
+                  <div style={{padding:"8px 12px"}}>
+                    <div style={{fontSize:11,color:t.textMuted,fontWeight:600,marginBottom:6}}>Display name</div>
+                    <input autoFocus value={newDisplayName} onChange={e=>{setNewDisplayName(e.target.value);setUserMenuError("");}}
+                      onKeyDown={e=>{if(e.key==="Enter")handleRenameUser();if(e.key==="Escape"){setRenamingUser(false);setNewDisplayName("");setUserMenuError("");}}}
+                      placeholder="Enter display name"
+                      style={{width:"100%",padding:"5px 8px",borderRadius:5,border:"1px solid "+(userMenuError?t.dangerText:t.btnAct),background:t.inBg,color:t.text,fontSize:12,outline:"none",boxSizing:"border-box",marginBottom:userMenuError?4:6}}/>
+                    {userMenuError&&<div style={{fontSize:11,color:t.dangerText,marginBottom:6}}>{userMenuError}</div>}
+                    <div style={{display:"flex",gap:6}}>
+                      <button onClick={handleRenameUser} disabled={userMenuSaving}
+                        style={{flex:1,padding:"4px 0",borderRadius:5,border:"none",cursor:userMenuSaving?"default":"pointer",fontSize:12,fontWeight:700,background:userMenuSaving?t.textDim:t.btnAct,color:"#fff"}}>
+                        {userMenuSaving?"Saving…":"Save"}
+                      </button>
+                      <button onClick={()=>{setRenamingUser(false);setNewDisplayName("");setUserMenuError("");}}
+                        style={{flex:1,padding:"4px 0",borderRadius:5,border:"1px solid "+t.border,cursor:"pointer",fontSize:12,fontWeight:600,background:t.btnBg,color:t.btnText}}>Cancel</button>
+                    </div>
+                  </div>
+                ):confirmSignOut?(
+                  <div style={{padding:"8px 12px"}}>
+                    <div style={{fontSize:12,color:t.textMuted,fontWeight:600,marginBottom:8,textAlign:"center"}}>Sign out of this account?</div>
+                    <div style={{display:"flex",gap:6}}>
+                      <button onClick={()=>sbClient.auth.signOut({scope:"local"})}
+                        style={{flex:1,padding:"5px 0",borderRadius:5,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:t.dangerText,color:"#fff"}}>Sign Out</button>
+                      <button onClick={()=>setConfirmSignOut(false)}
+                        style={{flex:1,padding:"5px 0",borderRadius:5,border:"1px solid "+t.border,cursor:"pointer",fontSize:12,fontWeight:600,background:t.btnBg,color:t.btnText}}>Cancel</button>
+                    </div>
+                  </div>
+                ):(
+                  <>
+                    <button onClick={()=>{setNewDisplayName(displayName);setRenamingUser(true);}}
+                      style={{display:"block",width:"100%",textAlign:"left",padding:"8px 14px",border:"none",cursor:"pointer",fontSize:13,fontWeight:500,background:"transparent",color:t.text,transition:"background 0.1s"}}
+                      onMouseEnter={e=>e.currentTarget.style.background=isDark?"#1e2a38":"#f0f4ff"}
+                      onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                      ✏️ Change display name
                     </button>
-                    <button onMouseDown={()=>{setRenamingUser(false);setNewDisplayName("");setUserMenuError("");}}
-                      style={{flex:1,padding:"4px 0",borderRadius:5,border:"1px solid "+t.border,cursor:"pointer",fontSize:12,fontWeight:600,background:t.btnBg,color:t.btnText}}>Cancel</button>
-                  </div>
-                </div>
-              ):confirmSignOut?(
-                <div style={{padding:"8px 12px"}}>
-                  <div style={{fontSize:12,color:t.textMuted,fontWeight:600,marginBottom:8,textAlign:"center"}}>Sign out of this account?</div>
-                  <div style={{display:"flex",gap:6}}>
-                    <button onMouseDown={()=>sbClient.auth.signOut()}
-                      style={{flex:1,padding:"5px 0",borderRadius:5,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:t.dangerText,color:"#fff"}}>Sign Out</button>
-                    <button onMouseDown={()=>setConfirmSignOut(false)}
-                      style={{flex:1,padding:"5px 0",borderRadius:5,border:"1px solid "+t.border,cursor:"pointer",fontSize:12,fontWeight:600,background:t.btnBg,color:t.btnText}}>Cancel</button>
-                  </div>
-                </div>
-              ):(
-                <>
-                  <button onMouseDown={()=>{setNewDisplayName(displayName);setRenamingUser(true);}}
-                    style={{display:"block",width:"100%",textAlign:"left",padding:"8px 14px",border:"none",cursor:"pointer",fontSize:13,fontWeight:500,background:"transparent",color:t.text,transition:"background 0.1s"}}
-                    onMouseEnter={e=>e.currentTarget.style.background=isDark?"#1e2a38":"#f0f4ff"}
-                    onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                    ✏️ Change display name
-                  </button>
-                  <div style={{height:1,background:t.border,margin:"4px 0"}}/>
-                  <button onMouseDown={()=>setConfirmSignOut(true)}
-                    style={{display:"block",width:"100%",textAlign:"left",padding:"8px 14px",border:"none",cursor:"pointer",fontSize:13,fontWeight:500,background:"transparent",color:t.dangerText,transition:"background 0.1s"}}
-                    onMouseEnter={e=>e.currentTarget.style.background=isDark?"#2a1a1a":"#fff4f4"}
-                    onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
-                    ⎋ Sign out
-                  </button>
-                </>
-              )}
-            </div>
+                    <div style={{height:1,background:t.border,margin:"4px 0"}}/>
+                    <button onClick={()=>setConfirmSignOut(true)}
+                      style={{display:"block",width:"100%",textAlign:"left",padding:"8px 14px",border:"none",cursor:"pointer",fontSize:13,fontWeight:500,background:"transparent",color:t.dangerText,transition:"background 0.1s"}}
+                      onMouseEnter={e=>e.currentTarget.style.background=isDark?"#2a1a1a":"#fff4f4"}
+                      onMouseLeave={e=>e.currentTarget.style.background="transparent"}>
+                      ⎋ Sign out
+                    </button>
+                  </>
+                )}
+              </div>
+            </>,
+            document.body
           )}
         </div>
       </div>
