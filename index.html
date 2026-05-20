@@ -1522,6 +1522,8 @@ function App(){
   const[confirmSignOut,setConfirmSignOut]=useState(false);
   const[renamingUser,setRenamingUser]=useState(false);
   const[newDisplayName,setNewDisplayName]=useState("");
+  const[userMenuError,setUserMenuError]=useState("");
+  const[userMenuSaving,setUserMenuSaving]=useState(false);
   const userMenuRef=useRef(null);
   const[sharedScenarios,setSharedScenarios]=useState([]);
   const[sharedLoading,setSharedLoading]=useState(true);
@@ -1563,7 +1565,7 @@ function App(){
   },[]);
   useEffect(()=>{
     if(!userMenuOpen)return;
-    function handleClick(e){if(userMenuRef.current&&!userMenuRef.current.contains(e.target)){setUserMenuOpen(false);setConfirmSignOut(false);setRenamingUser(false);}}
+    function handleClick(e){if(userMenuRef.current&&!userMenuRef.current.contains(e.target)){setUserMenuOpen(false);setConfirmSignOut(false);setRenamingUser(false);setUserMenuError("");}}
     document.addEventListener("mousedown",handleClick);
     return()=>document.removeEventListener("mousedown",handleClick);
   },[userMenuOpen]);
@@ -1767,7 +1769,6 @@ function App(){
     setCompareView(false);
     const isSaved=sc.source!=="published";
     setLoadedScenarioKey(isSaved?sc.key:null);
-    if(isSaved&&compareIds.size<5){const next=new Set(compareIds);next.add(sc.key);setCompareIds(next);showCompareBar();}
   }
   async function deleteScenario(key){
     const{error}=await sbClient.from('scenarios').delete().eq('id',key);
@@ -1805,13 +1806,14 @@ function App(){
   useEffect(()=>{loadSharedScenarios();},[]);
   async function handleRenameUser(){
     const trimmed=newDisplayName.trim();
-    if(!trimmed)return;
-    const{error}=await sbClient.auth.updateUser({data:{display_name:trimmed}});
-    if(error){setSaveError("Could not update display name. Try again.");return;}
-    // Refresh session to pick up new metadata
-    const{data:{session:refreshed}}=await sbClient.auth.getSession();
-    if(refreshed)setSession(refreshed);
-    setRenamingUser(false);setUserMenuOpen(false);setNewDisplayName("");
+    if(!trimmed){setUserMenuError("Display name cannot be empty.");return;}
+    setUserMenuSaving(true);setUserMenuError("");
+    const{data,error}=await sbClient.auth.updateUser({data:{display_name:trimmed}});
+    setUserMenuSaving(false);
+    if(error){setUserMenuError(error.message||"Could not update display name. Try again.");return;}
+    // Use the user returned directly from updateUser — most up-to-date
+    if(data?.user)setSession(prev=>prev?{...prev,user:data.user}:prev);
+    setRenamingUser(false);setUserMenuOpen(false);setNewDisplayName("");setUserMenuError("");
   }
   async function publishScenario(sc){
     if(!currentUser){setShareError("Set a display name first (click ✏️ in the Saved & Published section).");return;}
@@ -2014,7 +2016,7 @@ function App(){
           ))}
         </div>
         <div ref={userMenuRef} style={{position:"relative",flexShrink:0}}>
-          <button onClick={()=>{if(!userMenuOpen){setConfirmSignOut(false);setRenamingUser(false);setNewDisplayName(displayName);}setUserMenuOpen(o=>!o);}}
+          <button onClick={()=>{if(!userMenuOpen){setConfirmSignOut(false);setRenamingUser(false);setNewDisplayName(displayName);setUserMenuError("");}setUserMenuOpen(o=>!o);}}
             title={"Signed in as "+currentUser}
             style={{padding:"5px 10px",borderRadius:5,border:"1px solid "+(userMenuOpen?t.btnAct:t.border),cursor:"pointer",fontSize:12,fontWeight:600,background:userMenuOpen?(isDark?"#1a2a3a":"#eaf3ff"):t.btnBg,color:userMenuOpen?t.btnAct:t.textMuted,display:"flex",alignItems:"center",gap:5,transition:"background 0.15s,color 0.15s,border-color 0.15s"}}>
             {!mob&&<span style={{maxWidth:120,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{displayName}</span>}
@@ -2029,14 +2031,17 @@ function App(){
               {renamingUser?(
                 <div style={{padding:"8px 12px"}}>
                   <div style={{fontSize:11,color:t.textMuted,fontWeight:600,marginBottom:6}}>Display name</div>
-                  <input autoFocus value={newDisplayName} onChange={e=>setNewDisplayName(e.target.value)}
-                    onKeyDown={e=>{if(e.key==="Enter")handleRenameUser();if(e.key==="Escape"){setRenamingUser(false);setNewDisplayName("");}}}
+                  <input autoFocus value={newDisplayName} onChange={e=>{setNewDisplayName(e.target.value);setUserMenuError("");}}
+                    onKeyDown={e=>{if(e.key==="Enter")handleRenameUser();if(e.key==="Escape"){setRenamingUser(false);setNewDisplayName("");setUserMenuError("");}}}
                     placeholder="Enter display name"
-                    style={{width:"100%",padding:"5px 8px",borderRadius:5,border:"1px solid "+t.btnAct,background:t.inBg,color:t.text,fontSize:12,outline:"none",boxSizing:"border-box",marginBottom:6}}/>
+                    style={{width:"100%",padding:"5px 8px",borderRadius:5,border:"1px solid "+(userMenuError?t.dangerText:t.btnAct),background:t.inBg,color:t.text,fontSize:12,outline:"none",boxSizing:"border-box",marginBottom:userMenuError?4:6}}/>
+                  {userMenuError&&<div style={{fontSize:11,color:t.dangerText,marginBottom:6}}>{userMenuError}</div>}
                   <div style={{display:"flex",gap:6}}>
-                    <button onMouseDown={handleRenameUser}
-                      style={{flex:1,padding:"4px 0",borderRadius:5,border:"none",cursor:"pointer",fontSize:12,fontWeight:700,background:t.btnAct,color:"#fff"}}>Save</button>
-                    <button onMouseDown={()=>{setRenamingUser(false);setNewDisplayName("");}}
+                    <button onMouseDown={handleRenameUser} disabled={userMenuSaving}
+                      style={{flex:1,padding:"4px 0",borderRadius:5,border:"none",cursor:userMenuSaving?"default":"pointer",fontSize:12,fontWeight:700,background:userMenuSaving?t.textDim:t.btnAct,color:"#fff"}}>
+                      {userMenuSaving?"Saving…":"Save"}
+                    </button>
+                    <button onMouseDown={()=>{setRenamingUser(false);setNewDisplayName("");setUserMenuError("");}}
                       style={{flex:1,padding:"4px 0",borderRadius:5,border:"1px solid "+t.border,cursor:"pointer",fontSize:12,fontWeight:600,background:t.btnBg,color:t.btnText}}>Cancel</button>
                   </div>
                 </div>
