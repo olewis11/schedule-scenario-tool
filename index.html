@@ -831,7 +831,7 @@ function ScenarioTable({scenarios,loading,saveError,setSaveError,scenarioName,se
 }
 
 // ── SharedScenarioTable ───────────────────────────────────────────────────────
-function SharedScenarioTable({sharedScenarios,loading,shareError,currentUser,onRestore,onUnpublish,onDuplicate,onRenameShared,onRefresh,compareIds,onToggleCompare,t,isDark}){
+function SharedScenarioTable({sharedScenarios,loading,shareError,currentUser,displayName,onRestore,onUnpublish,onDuplicate,onRenameShared,onRefresh,compareIds,onToggleCompare,t,isDark}){
   const[collapsed,setCollapsed]=useState(false);
   const[confirmUnpub,setConfirmUnpub]=useState(null);
   const[search,setSearch]=useState("");
@@ -960,7 +960,7 @@ function SharedScenarioTable({sharedScenarios,loading,shareError,currentUser,onR
                   </td>
                   <td style={tdS}>
                     <span title={sc.owner} style={{display:"inline-flex",alignItems:"center",gap:5}}>
-                      <span style={{fontSize:11,background:isDark?"#1a2e48":"#dce8f5",color:t.btnText,borderRadius:3,padding:"1px 6px",fontWeight:700,letterSpacing:0.3}}>{(sc.owner||"").split("@")[0]}</span>
+                      <span style={{fontSize:11,background:isDark?"#1a2e48":"#dce8f5",color:t.btnText,borderRadius:3,padding:"1px 6px",fontWeight:700,letterSpacing:0.3}}>{sc.owner===currentUser?(displayName||(sc.owner||"").split("@")[0]):(sc.owner||"").split("@")[0]}</span>
                       {isOwner&&<span style={{fontSize:10,color:t.textDim,fontStyle:"italic"}}>you</span>}
                     </span>
                   </td>
@@ -1073,7 +1073,7 @@ function ReadOnlyProdBlock({ph,x1,x2,startDate,endDate,durationDays,t}){
   );
 }
 
-function CompareStrip({data,ticks,xFrac,sopX,accentColor,compareAlign,todayFrac,showTodayLine,hiddenRows,t,isDark}){
+function CompareStrip({data,ticks,xFrac,sopX,accentColor,compareAlign,todayFrac,showTodayLine,hiddenRows,t,isDark,currentUser,displayName}){
   const{sc,n,st,devDays,startDate,sopDate,launchDays,postDays,displayEndDate}=data;
   const launchEndDate=addD(sopDate,launchDays);
   const trPos=Array.isArray(sc.trPos)?sc.trPos:DEFAULT_TR.map(r=>r.pos);
@@ -1103,7 +1103,7 @@ function CompareStrip({data,ticks,xFrac,sopX,accentColor,compareAlign,todayFrac,
       {/* Strip header */}
       <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 14px",background:isDark?"rgba(255,255,255,0.025)":"rgba(0,0,0,0.025)",borderBottom:"1px solid "+t.border}}>
         <span style={{fontSize:14,fontWeight:800,color:t.text,flex:1,minWidth:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{sc.name}</span>
-        {isPublished&&<span style={{fontSize:11,background:isDark?"#1a2e48":"#dce8f5",color:t.btnText,borderRadius:3,padding:"1px 7px",fontWeight:700,flexShrink:0}}>📢 {(sc.owner||"").split("@")[0]}</span>}
+        {isPublished&&<span style={{fontSize:11,background:isDark?"#1a2e48":"#dce8f5",color:t.btnText,borderRadius:3,padding:"1px 7px",fontWeight:700,flexShrink:0}}>📢 {sc.owner===currentUser?(displayName||(sc.owner||"").split("@")[0]):(sc.owner||"").split("@")[0]}</span>}
         <span style={{fontSize:11,background:isDark?"rgba(255,255,255,0.06)":"rgba(0,0,0,0.05)",borderRadius:4,padding:"2px 8px",color:t.textMuted,fontWeight:600,flexShrink:0,whiteSpace:"nowrap"}}>{fmtW(devDays/7)} dev</span>
         <span style={{fontSize:12,color:t.textMuted,flexShrink:0,whiteSpace:"nowrap"}}>{fmtD(startDate)} → SOP {fmtD(sopDate)}</span>
       </div>
@@ -1229,7 +1229,7 @@ function CompareStrip({data,ticks,xFrac,sopX,accentColor,compareAlign,todayFrac,
 
 function CompareView({selected,compareAlign,setCompareAlign,hiddenRows,toggleRow,todayDate,showTodayLine,toggleTodayLine,t,isDark,onBack,
   scenarios,scenariosLoading,saveError,setSaveError,scenarioName,setScenarioName,onSave,onOverwrite,onRestore,onDelete,onRename,onDuplicate,onRefresh,onPublish,publishedKeys,
-  sharedScenarios,sharedLoading,shareError,onUnpublish,onDuplicateShared,onRenameShared,onRefreshShared,currentUser,
+  sharedScenarios,sharedLoading,shareError,onUnpublish,onDuplicateShared,onRenameShared,onRefreshShared,currentUser,displayName,
   compareIds,onToggleCompare,loadedScenarioKey}){
   const[addOpen,setAddOpen]=useState(false);
   const[exporting,setExporting]=useState(false);
@@ -1338,7 +1338,8 @@ function CompareView({selected,compareAlign,setCompareAlign,hiddenRows,toggleRow
         return<CompareStrip key={d.sc.key} data={d} ticks={tks} xFrac={xFrac} sopX={sopX}
           accentColor={COMPARE_ACCENTS[idx]} compareAlign={compareAlign}
           todayFrac={compareAlign==="date"?todayFrac:null}
-          showTodayLine={showTodayLine} hiddenRows={hiddenRows} t={t} isDark={isDark}/>;
+          showTodayLine={showTodayLine} hiddenRows={hiddenRows} t={t} isDark={isDark}
+          currentUser={currentUser} displayName={displayName}/>;
       })}
       </div>
       {/* Add More Scenarios */}
@@ -1364,7 +1365,7 @@ function CompareView({selected,compareAlign,setCompareAlign,hiddenRows,toggleRow
               compareIds={compareIds||new Set()} onToggleCompare={onToggleCompare||function(){}} loadedKey={loadedScenarioKey}
               t={t} isDark={isDark} showSaveForm={false}/>
             <SharedScenarioTable sharedScenarios={sharedScenarios||[]} loading={!!sharedLoading}
-              shareError={shareError||""} currentUser={currentUser}
+              shareError={shareError||""} currentUser={currentUser} displayName={displayName}
               onRestore={onRestore||function(){}} onUnpublish={onUnpublish||function(){}} onDuplicate={onDuplicateShared||function(){}} onRenameShared={onRenameShared||function(){}} onRefresh={onRefreshShared||function(){}}
               compareIds={compareIds||new Set()} onToggleCompare={onToggleCompare||function(){}}
               t={t} isDark={isDark}/>
@@ -2121,7 +2122,7 @@ function App(){
           onRefresh={loadScenarios} onPublish={publishScenario} publishedKeys={myPublishedKeys}
           sharedScenarios={sharedScenarios} sharedLoading={sharedLoading}
           shareError={shareError} onUnpublish={unpublishScenario} onDuplicateShared={duplicatePublishedScenario} onRenameShared={renameSharedScenario} onRefreshShared={loadSharedScenarios}
-          currentUser={currentUser} compareIds={compareIds} onToggleCompare={toggleCompare}
+          currentUser={currentUser} displayName={displayName} compareIds={compareIds} onToggleCompare={toggleCompare}
           loadedScenarioKey={loadedScenarioKey}/>
       ):mode==null?(
         <div style={{display:"flex",flexDirection:"column",alignItems:"center",padding:mob?"12px 0":"28px 16px",gap:mob?14:20}}>
@@ -2211,7 +2212,7 @@ function App(){
               compareIds={compareIds} onToggleCompare={toggleCompare}
               loadedKey={loadedScenarioKey} t={t} isDark={isDark} showSaveForm={false}/>
             <SharedScenarioTable sharedScenarios={sharedScenarios} loading={sharedLoading} shareError={shareError}
-              currentUser={currentUser} onRestore={restoreScenario} onUnpublish={unpublishScenario} onDuplicate={duplicatePublishedScenario} onRenameShared={renameSharedScenario}
+              currentUser={currentUser} displayName={displayName} onRestore={restoreScenario} onUnpublish={unpublishScenario} onDuplicate={duplicatePublishedScenario} onRenameShared={renameSharedScenario}
               onRefresh={loadSharedScenarios} compareIds={compareIds} onToggleCompare={toggleCompare}
               t={t} isDark={isDark}/>
           </div>
@@ -2378,7 +2379,7 @@ function App(){
             compareIds={compareIds} onToggleCompare={toggleCompare}
             loadedKey={loadedScenarioKey} t={t} isDark={isDark} showSaveForm={true}/>
           <SharedScenarioTable sharedScenarios={sharedScenarios} loading={sharedLoading} shareError={shareError}
-            currentUser={currentUser} onRestore={restoreScenario} onUnpublish={unpublishScenario} onDuplicate={duplicatePublishedScenario} onRenameShared={renameSharedScenario}
+            currentUser={currentUser} displayName={displayName} onRestore={restoreScenario} onUnpublish={unpublishScenario} onDuplicate={duplicatePublishedScenario} onRenameShared={renameSharedScenario}
             onRefresh={loadSharedScenarios} compareIds={compareIds} onToggleCompare={toggleCompare}
             t={t} isDark={isDark}/>
         </div>
